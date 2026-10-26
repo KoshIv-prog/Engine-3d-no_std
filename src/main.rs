@@ -18,6 +18,35 @@ use windows_sys::w;
 const FRAME_HEIGHT: i32 = 9 * 10;
 const FRAME_WIDTH:i32= 16*10;
 
+#[derive(Clone)]
+struct Pixel{
+    r:u8,
+    g:u8,
+    b:u8,
+    a:u8,
+}
+
+impl Pixel{
+    const fn rgb(r:u8,g:u8,b:u8) -> Self{
+        Pixel{
+            r:r,
+            g:g,
+            b:b,
+            a:0,
+        }
+    }
+
+    const fn unpack(color : u32) -> Self{
+        let bytes = color.to_be_bytes(); // Розбиває на [R, G, B, A]
+        Pixel {
+            r: bytes[0],
+            g: bytes[1],
+            b: bytes[2],
+            a: bytes[3],
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn mainCRTStartup() -> ! {
     let window_class_name = w!("my window class");
@@ -80,7 +109,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
                 None => ExitProcess(1),
             };
         let framebuffer_bytes =
-            match framebuffer_len.checked_mul(size_of::<u32>()){
+            match framebuffer_len.checked_mul(size_of::<Pixel>()){
                 Some(x) => x,
                 None => ExitProcess(1),
             };
@@ -90,7 +119,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
         if heap.is_null() {
             ExitProcess(1);
         }
-        let frame_buffer_ptr = heap as *mut u32;
+        let frame_buffer_ptr = heap as *mut Pixel;
         let framebuffer = slice::from_raw_parts_mut(frame_buffer_ptr, framebuffer_len);
 
 
@@ -168,7 +197,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
             last_time = GetTickCount64();
 
             // work flow
-            framebuffer.fill(u32::max_value());
+            framebuffer.fill(Pixel::unpack(u32::max_value()));
 
             if x + vel_x >= FRAME_WIDTH || x + vel_x < 0 {
                 vel_x = -vel_x;
@@ -179,7 +208,9 @@ pub extern "system" fn mainCRTStartup() -> ! {
             x = x + vel_x;
             y = y + vel_y;
 
-            framebuffer[(y*FRAME_WIDTH + x) as usize] = 0;
+            framebuffer[(y*FRAME_WIDTH + x) as usize].r = 0;
+            framebuffer[(y*FRAME_WIDTH + x) as usize].b = 0;
+            framebuffer[(y*FRAME_WIDTH + x) as usize].g = 0;
 
 
             present_frame(window,&bitmap_info,framebuffer, FRAME_WIDTH, FRAME_HEIGHT);
@@ -213,7 +244,7 @@ unsafe extern "system" fn window_proc(
 fn present_frame(
     window: HWND,
     bitmap_info: &BITMAPINFO,
-    framebuffer: & [u32],
+    framebuffer: & [Pixel],
     frame_width: i32,
     frame_height: i32,
 ) {
