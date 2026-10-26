@@ -18,12 +18,13 @@ use windows_sys::w;
 const FRAME_HEIGHT: i32 = 9 * 10;
 const FRAME_WIDTH:i32= 16*10;
 
-#[derive(Clone)]
-struct Pixel{
-    r:u8,
-    g:u8,
-    b:u8,
-    a:u8,
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Pixel {
+    b: u8,
+    g: u8,
+    r: u8,
+    _reserved: u8,
 }
 
 impl Pixel{
@@ -32,19 +33,10 @@ impl Pixel{
             r:r,
             g:g,
             b:b,
-            a:0,
+            _reserved:0,
         }
     }
 
-    const fn unpack(color : u32) -> Self{
-        let bytes = color.to_be_bytes(); // Розбиває на [R, G, B, A]
-        Pixel {
-            r: bytes[0],
-            g: bytes[1],
-            b: bytes[2],
-            a: bytes[3],
-        }
-    }
 }
 
 #[unsafe(no_mangle)]
@@ -104,7 +96,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
 
         let process_heap = GetProcessHeap();
         let framebuffer_len =
-            match FRAME_WIDTH.checked_mul(FRAME_WIDTH) {
+            match FRAME_WIDTH.checked_mul(FRAME_HEIGHT) {
                 Some(x) => x as usize,
                 None => ExitProcess(1),
             };
@@ -197,7 +189,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
             last_time = GetTickCount64();
 
             // work flow
-            framebuffer.fill(Pixel::unpack(u32::max_value()));
+            framebuffer.fill(Pixel::rgb(255,255,255));
 
             if x + vel_x >= FRAME_WIDTH || x + vel_x < 0 {
                 vel_x = -vel_x;
@@ -208,9 +200,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
             x = x + vel_x;
             y = y + vel_y;
 
-            framebuffer[(y*FRAME_WIDTH + x) as usize].r = 0;
-            framebuffer[(y*FRAME_WIDTH + x) as usize].b = 0;
-            framebuffer[(y*FRAME_WIDTH + x) as usize].g = 0;
+            framebuffer[(y*FRAME_WIDTH + x) as usize] = Pixel::rgb(0,0,0);
 
 
             present_frame(window,&bitmap_info,framebuffer, FRAME_WIDTH, FRAME_HEIGHT);
@@ -263,6 +253,10 @@ fn present_frame(
         }
 
         let hdc = GetDC(window);
+
+        if hdc.is_null() {
+            return;
+        }
 
         let lines = StretchDIBits(
             hdc,
