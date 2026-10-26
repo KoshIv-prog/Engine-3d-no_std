@@ -5,12 +5,18 @@
 
 use core::panic::PanicInfo;
 use core::ptr::{null, null_mut};
+use core::slice;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows_sys::Win32::Graphics::Gdi::{BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, GetDC, RGBQUAD, ReleaseDC, SRCCOPY, StretchDIBits};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::System::Threading::ExitProcess;
-use windows_sys::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DefWindowProcW, PostQuitMessage, RegisterClassExW, ShowWindow, SW_SHOWNORMAL, MSG, PM_REMOVE, WM_DESTROY, WM_QUIT, WNDCLASSEXW, WS_OVERLAPPEDWINDOW, DispatchMessageW, TranslateMessage, PeekMessageW};
+use windows_sys::Win32::System::Memory::{GetProcessHeap, HEAP_ZERO_MEMORY, HeapAlloc};
+use windows_sys::Win32::System::SystemInformation::GetTickCount64;
+use windows_sys::Win32::System::Threading::{ExitProcess, Sleep};
+use windows_sys::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, RegisterClassExW, SW_SHOWNORMAL, ShowWindow, TranslateMessage, WM_DESTROY, WM_QUIT, WNDCLASSEXW, WS_OVERLAPPEDWINDOW};
 use windows_sys::w;
-use windows_sys::Win32::Graphics::Gdi::{GetDC, ReleaseDC, BITMAPINFO, CreateBitmap, StretchDIBits};
+
+const FRAME_HEIGHT: i32 = 9 * 10;
+const FRAME_WIDTH:i32= 16*10;
 
 #[unsafe(no_mangle)]
 pub extern "system" fn mainCRTStartup() -> ! {
@@ -67,6 +73,55 @@ pub extern "system" fn mainCRTStartup() -> ! {
             ExitProcess(2);
         }
 
+        let process_heap = GetProcessHeap();
+        let framebuffer_len =
+            match FRAME_WIDTH.checked_mul(FRAME_WIDTH) {
+                Some(x) => x as usize,
+                None => ExitProcess(1),
+            };
+        let framebuffer_bytes =
+            match framebuffer_len.checked_mul(size_of::<u32>()){
+                Some(x) => x,
+                None => ExitProcess(1),
+            };
+
+
+        let heap = HeapAlloc(process_heap, HEAP_ZERO_MEMORY, framebuffer_bytes);
+        if heap.is_null() {
+            ExitProcess(1);
+        }
+        let frame_buffer_ptr = heap as *mut u32;
+        let framebuffer = slice::from_raw_parts_mut(frame_buffer_ptr, framebuffer_len);
+
+
+
+        let bitmap_info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: size_of::<BITMAPINFOHEADER>() as u32,
+
+                biWidth: FRAME_WIDTH,
+
+                biHeight: -FRAME_HEIGHT,
+
+                biPlanes: 1,
+                biBitCount: 32,
+
+                biCompression: BI_RGB,
+
+                biSizeImage: 0,
+                biXPelsPerMeter: 0,
+                biYPelsPerMeter: 0,
+                biClrUsed: 0,
+                biClrImportant: 0,
+            },
+
+            bmiColors: [RGBQUAD {
+                rgbBlue: 0,
+                rgbGreen: 0,
+                rgbRed: 0,
+                rgbReserved: 0,
+            }],
+        };
 
         ShowWindow(window, SW_SHOWNORMAL);
 
@@ -74,6 +129,13 @@ pub extern "system" fn mainCRTStartup() -> ! {
         let mut msg: MSG = unsafe {
             core::mem::zeroed()
         };
+
+        let mut last_time = GetTickCount64();
+        let mut x = 0;
+        let mut y = 0;
+
+        let mut vel_x = 1;
+        let mut vel_y = 1;
 
         loop {
             while unsafe {
@@ -98,8 +160,29 @@ pub extern "system" fn mainCRTStartup() -> ! {
                 }
             }
 
-            // work flow
+            if GetTickCount64() - last_time < 100 {
+                Sleep(10);
+                continue;
+            }
 
+            last_time = GetTickCount64();
+
+            // work flow
+            framebuffer.fill(u32::max_value());
+
+            if x + vel_x >= FRAME_WIDTH || x + vel_x < 0 {
+                vel_x = -vel_x;
+            }
+            if y + vel_y >= FRAME_HEIGHT || y + vel_y < 0{
+                vel_y = -vel_y;
+            }
+            x = x + vel_x;
+            y = y + vel_y;
+
+            framebuffer[(y*FRAME_WIDTH + x) as usize] = 0;
+
+
+            present_frame(window,&bitmap_info,framebuffer, FRAME_WIDTH, FRAME_HEIGHT);
 
         }
     }
@@ -123,6 +206,58 @@ unsafe extern "system" fn window_proc(
                 wparam,
                 lparam,
             )
+        }
+    }
+}
+
+fn present_frame(
+    window: HWND,
+    bitmap_info: &BITMAPINFO,
+    framebuffer: & [u32],
+    frame_width: i32,
+    frame_height: i32,
+) {
+    unsafe {
+        let mut rect = core::mem::zeroed();
+
+        if GetClientRect(window, &mut rect) == 0 {
+            return;
+        }
+
+        let width = rect.right - rect.left;
+        let height = rect.bottom - rect.top;
+
+        if width <= 0 || height <= 0 {
+            return;
+        }
+
+        let hdc = GetDC(window);
+
+        let lines = StretchDIBits(
+            hdc,
+
+            0,
+            0,
+            width,
+            height,
+
+            0,
+            0,
+            frame_width,
+            frame_height,
+
+            framebuffer.as_ptr() as  _,
+
+            bitmap_info,
+            DIB_RGB_COLORS,
+            SRCCOPY
+        );
+
+        ReleaseDC(window, hdc);
+
+
+        if lines == 0 {
+            // presentation failed
         }
     }
 }
