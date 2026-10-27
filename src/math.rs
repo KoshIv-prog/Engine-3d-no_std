@@ -1,4 +1,4 @@
-use crate::tanf;
+use crate::{cosf, sinf, tanf};
 
 #[derive(Clone, Copy)]
 pub struct Vec4 {
@@ -73,6 +73,115 @@ impl Mat4 {
                     1.0,
                     0.0,
                 ],
+            ],
+        }
+    }
+
+    pub fn identity() -> Mat4 {
+        Mat4{
+            m:[
+                [
+                    1.0,
+                    0.0,
+                    0.0,
+                    0.0
+                ],
+                [
+                    0.0,
+                    1.0,
+                    0.0,
+                    0.0
+                ],
+                [
+                    0.0,
+                    0.0,
+                    1.0,
+                    0.0
+                ],
+                [
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0
+                ],
+            ]
+        }
+    }
+    pub fn mul(a: &Mat4, b: &Mat4) -> Mat4 {
+        let mut result = Mat4 {
+            m: [[0.0; 4]; 4],
+        };
+
+        for row in 0..4 {
+            for col in 0..4 {
+                let mut sum = 0.0;
+
+                for k in 0..4 {
+                    sum += a.m[row][k] * b.m[k][col];
+                }
+
+                result.m[row][col] = sum;
+            }
+        }
+
+        result
+    }
+    pub const fn translation(x: f32, y: f32, z: f32) -> Mat4 {
+        Mat4 {
+            m: [
+                [1.0, 0.0, 0.0, x],
+                [0.0, 1.0, 0.0, y],
+                [0.0, 0.0, 1.0, z],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        }
+    }
+    pub const fn scale(x: f32, y: f32, z: f32) -> Mat4 {
+        Mat4 {
+            m: [
+                [x,   0.0, 0.0, 0.0],
+                [0.0, y,   0.0, 0.0],
+                [0.0, 0.0, z,   0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        }
+    }
+    pub fn rotation_y(angle: f32) -> Mat4 {
+        let cos = unsafe { cosf(angle) };
+        let sin = unsafe { sinf(angle) };
+
+        Mat4 {
+            m: [
+                [ cos, 0.0,  sin, 0.0],
+                [ 0.0, 1.0, 0.0, 0.0],
+                [-sin, 0.0,  cos, 0.0],
+                [ 0.0, 0.0, 0.0, 1.0],
+            ],
+        }
+    }
+    pub fn rotation_x(angle: f32) -> Mat4 {
+        let cos = unsafe { cosf(angle) };
+        let sin = unsafe { sinf(angle) };
+
+        Mat4 {
+            m: [
+                [1.0, 0.0,  0.0, 0.0],
+                [0.0, cos,  -sin, 0.0],
+                [0.0, sin,   cos, 0.0],
+                [0.0, 0.0,  0.0, 1.0],
+            ],
+        }
+    }
+    pub fn rotation_z(angle: f32) -> Mat4 {
+        let cos = unsafe { cosf(angle) };
+        let sin = unsafe { sinf(angle) };
+
+        Mat4 {
+            m: [
+                [cos, -sin, 0.0, 0.0],
+                [sin,  cos, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
             ],
         }
     }
