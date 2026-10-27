@@ -5,21 +5,20 @@
 
 mod math;
 
-use core::ops::Add;
 use crate::math::Vec4;
 use core::panic::PanicInfo;
 use core::ptr::{null, null_mut};
 use core::slice;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::{GetDC, ReleaseDC, StretchDIBits, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, COLORONCOLOR, DIB_RGB_COLORS, RGBQUAD, SRCCOPY, SetStretchBltMode, SetBrushOrgEx, HALFTONE};
+use windows_sys::Win32::Graphics::Gdi::{BITMAPINFO, BITMAPINFOHEADER, BI_RGB, COLORONCOLOR, DIB_RGB_COLORS, GetDC, RGBQUAD, ReleaseDC, SRCCOPY, SetStretchBltMode, StretchDIBits};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Memory::{GetProcessHeap, HEAP_ZERO_MEMORY, HeapAlloc};
 use windows_sys::Win32::System::SystemInformation::GetTickCount64;
 use windows_sys::Win32::System::Threading::{ExitProcess, Sleep};
-use windows_sys::Win32::UI::WindowsAndMessaging::{AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect, PeekMessageW, PostQuitMessage, RegisterClassExW, ShowWindow, TranslateMessage, MSG, PM_REMOVE, SW_SHOWNORMAL, WM_DESTROY, WM_QUIT, WNDCLASSEXW, WS_OVERLAPPEDWINDOW};
+use windows_sys::Win32::UI::WindowsAndMessaging::{AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, RegisterClassExW, SW_SHOWNORMAL, ShowWindow, TranslateMessage, WM_DESTROY, WM_QUIT, WNDCLASSEXW, WS_OVERLAPPEDWINDOW};
 use windows_sys::w;
 
-const FRAME_HEIGHT: i32 = 720;//9 * 10;
+const FRAME_HEIGHT: i32 = 720; //9 * 10;
 const FRAME_WIDTH:i32= 1280;//16*10;
 
 #[repr(C)]
@@ -96,16 +95,16 @@ struct Camera {
 
 #[unsafe(no_mangle)]
 pub extern "system" fn mainCRTStartup() -> ! {
-    let mut vertices : [VertexModel; 4] = [
-        VertexModel{
+    let mut vertices: [VertexModel; 4] = [
+        VertexModel {
             x_model: 1.0,
-            y_model:-0.5,
+            y_model: -0.5,
             z_model: 2.0,
             r: 255,
             g: 0,
             b: 0,
         },
-        VertexModel{
+        VertexModel {
             x_model: -1.0,
             y_model: -0.5,
             z_model: 2.0,
@@ -113,7 +112,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
             g: 255,
             b: 0,
         },
-        VertexModel{
+        VertexModel {
             x_model: 0.0,
             y_model: 0.5,
             z_model: 2.0,
@@ -121,7 +120,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
             g: 0,
             b: 255,
         },
-        VertexModel{
+        VertexModel {
             x_model: 1.0,
             y_model: 0.5,
             z_model: 4.0,
@@ -131,9 +130,9 @@ pub extern "system" fn mainCRTStartup() -> ! {
         }
     ];
 
-    let indices :[u32;6]= [
-        0,1,2,
-        0,1,3
+    let indices: [u32; 6] = [
+        0, 1, 2,
+        0, 1, 3
     ];
 
     let model;
@@ -141,11 +140,10 @@ pub extern "system" fn mainCRTStartup() -> ! {
     let camera;
 
 
-
     let window_class_name = w!("my window class");
 
     let instance = unsafe {
-        GetModuleHandleW(core::ptr::null())
+        GetModuleHandleW(null())
     };
 
     let window_class = WNDCLASSEXW {
@@ -174,29 +172,31 @@ pub extern "system" fn mainCRTStartup() -> ! {
     }
 
     let window;
-    unsafe {
-        let mut rect = RECT {
-            left: 0,
-            top: 0,
-            right: 1280,
-            bottom: 720,
-        };
 
+    let mut rect = RECT {
+        left: 0,
+        top: 0,
+        right: 1280,
+        bottom: 720,
+    };
+    unsafe {
         AdjustWindowRectEx(
             &mut rect,
             WS_OVERLAPPEDWINDOW,
             0,
             0,
         );
+    }
 
-        let window_width =
-            rect.right - rect.left;
+    let window_width =
+        rect.right - rect.left;
 
-        let window_height =
-            rect.bottom - rect.top;
+    let window_height =
+        rect.bottom - rect.top;
 
 
-        window = CreateWindowExW(
+    window = unsafe {
+        CreateWindowExW(
             0,
             window_class_name,
             w!("Rust no_std Renderer"),
@@ -209,20 +209,27 @@ pub extern "system" fn mainCRTStartup() -> ! {
             null_mut(),
             instance,
             null(),
-        );
+        )
+    };
+    if window.is_null() {
+        unsafe { ExitProcess(2); }
+    }
 
-        if window.is_null() {
-            ExitProcess(2);
-        }
+    let process_heap = unsafe { GetProcessHeap() };
 
-        let process_heap = GetProcessHeap();
+    let framebuffer_ptr;
+    let z_buffer_ptr;
+    let mut framebuffer;
+    let mut z_buffer;
+    let screen_heap;
+    unsafe {
         let framebuffer_len =
             match FRAME_WIDTH.checked_mul(FRAME_HEIGHT) {
                 Some(x) => x as usize,
                 None => ExitProcess(1),
             };
         let framebuffer_bytes =
-            match framebuffer_len.checked_mul(size_of::<Pixel>()){
+            match framebuffer_len.checked_mul(size_of::<Pixel>()) {
                 Some(x) => x,
                 None => ExitProcess(1),
             };
@@ -239,94 +246,108 @@ pub extern "system" fn mainCRTStartup() -> ! {
             };
 
         let target_screen_buffer_size =
-            match framebuffer_bytes.checked_add(z_buffer_bytes){
+            match framebuffer_bytes.checked_add(z_buffer_bytes) {
                 Some(x) => x,
                 None => ExitProcess(1),
             };
 
-        let heap = HeapAlloc(process_heap, HEAP_ZERO_MEMORY, target_screen_buffer_size);
-        if heap.is_null() {
+        screen_heap = HeapAlloc(process_heap, HEAP_ZERO_MEMORY, target_screen_buffer_size);
+        if screen_heap.is_null() {
             ExitProcess(1);
         }
-        let frame_buffer_ptr = heap as *mut Pixel;
-        let z_buffer_ptr = (heap as *mut u8).add(framebuffer_bytes) as *mut f32;
+        framebuffer_ptr = screen_heap as *mut Pixel;
+        z_buffer_ptr = (screen_heap as *mut u8).add(framebuffer_bytes) as *mut f32;
 
-        let framebuffer = slice::from_raw_parts_mut(frame_buffer_ptr, framebuffer_len);
-        let z_buffer = slice::from_raw_parts_mut(z_buffer_ptr, z_buffer_len);
+        framebuffer = slice::from_raw_parts_mut(framebuffer_ptr, framebuffer_len);
+        z_buffer = slice::from_raw_parts_mut(z_buffer_ptr, z_buffer_len);
+    }
 
-        //test----
+    //test----
+
+    let mut vertex_clips;
+    let mut vertex_processed;
+    let vertex_clips_ptr;
+    let vertex_processed_ptr;
+    let model_heap;
+
+    unsafe{
         let vertex_clips_len = vertices.len();
-        let vertex_clips_bytes = vertex_clips_len*size_of::<VertexClip>();
+        let vertex_clips_bytes = vertex_clips_len * size_of::<VertexClip>();
 
-        let vertex_processed_len =  vertices.len();
-        let vertex_processed_bytes = vertex_processed_len*size_of::<VertexProcessed>();
+        let vertex_processed_len = vertices.len();
+        let vertex_processed_bytes = vertex_processed_len * size_of::<VertexProcessed>();
 
         let sum_byte = vertex_processed_bytes + vertex_clips_bytes;
-        let model_heap = HeapAlloc(process_heap, HEAP_ZERO_MEMORY, sum_byte);
+        model_heap = HeapAlloc(process_heap, HEAP_ZERO_MEMORY, sum_byte);
 
         if model_heap.is_null() {
             ExitProcess(1);
         }
 
-        let vertex_clips_ptr = model_heap as *mut VertexClip;
-        let vertex_processed_ptr = (model_heap as *mut u8).add(vertex_clips_bytes) as *mut VertexProcessed;
+        vertex_clips_ptr = model_heap as *mut VertexClip;
+        vertex_processed_ptr = (model_heap as *mut u8).add(vertex_clips_bytes) as *mut VertexProcessed;
 
-        let mut vertex_clips = slice::from_raw_parts_mut(vertex_clips_ptr, vertex_clips_len);
-        let mut vertex_processed = slice::from_raw_parts_mut(vertex_processed_ptr, vertex_processed_len);
-        model = Model{
-            vertices: &mut vertices,
-            vertex_clips: &mut vertex_clips,
-            vertex_processed:&mut vertex_processed,
-            indices: & indices,
-        };
-
-
-        let matrix = math::Mat4::perspective(90 as f32*0.017453292519943295, FRAME_WIDTH as f32 / FRAME_HEIGHT as f32,0.1,100.0);
-        camera = Camera{
-            matrix:matrix,
-        };
-        //----
+        vertex_clips = slice::from_raw_parts_mut(vertex_clips_ptr, vertex_clips_len);
+        vertex_processed = slice::from_raw_parts_mut(vertex_processed_ptr, vertex_processed_len);
+    }
+    model = Model{
+        vertices: & mut vertices,
+        vertex_clips: &mut vertex_clips,
+        vertex_processed:&mut vertex_processed,
+        indices: & indices,
+    };
 
 
-        let bitmap_info = BITMAPINFO {
-            bmiHeader: BITMAPINFOHEADER {
-                biSize: size_of::<BITMAPINFOHEADER>() as u32,
+    let matrix = math::Mat4::perspective(90 as f32*0.017453292519943295, FRAME_WIDTH as f32 / FRAME_HEIGHT as f32,0.1,100.0);
+    camera = Camera{
+        matrix:matrix,
+    };
+    //----
 
-                biWidth: FRAME_WIDTH,
 
-                biHeight: -FRAME_HEIGHT,
+    let bitmap_info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
 
-                biPlanes: 1,
-                biBitCount: 32,
+            biWidth: FRAME_WIDTH,
 
-                biCompression: BI_RGB,
+            biHeight: -FRAME_HEIGHT,
 
-                biSizeImage: 0,
-                biXPelsPerMeter: 0,
-                biYPelsPerMeter: 0,
-                biClrUsed: 0,
-                biClrImportant: 0,
-            },
+            biPlanes: 1,
+            biBitCount: 32,
 
-            bmiColors: [RGBQUAD {
-                rgbBlue: 0,
-                rgbGreen: 0,
-                rgbRed: 0,
-                rgbReserved: 0,
-            }],
-        };
+            biCompression: BI_RGB,
 
+            biSizeImage: 0,
+            biXPelsPerMeter: 0,
+            biYPelsPerMeter: 0,
+            biClrUsed: 0,
+            biClrImportant: 0,
+        },
+
+        bmiColors: [RGBQUAD {
+            rgbBlue: 0,
+            rgbGreen: 0,
+            rgbRed: 0,
+            rgbReserved: 0,
+        }],
+    };
+
+    unsafe {
         ShowWindow(window, SW_SHOWNORMAL);
+    }
 
-
-        let mut msg: MSG = unsafe {
+    let mut msg: MSG = {
+        unsafe {
             core::mem::zeroed()
-        };
+        }
+    };
 
-        let mut last_time = GetTickCount64();
+    let mut last_time = unsafe {GetTickCount64()};
 
-        loop {
-            while unsafe {
+    loop {
+        while {
+            unsafe {
                 PeekMessageW(
                     &mut msg,
                     null_mut(),
@@ -334,86 +355,86 @@ pub extern "system" fn mainCRTStartup() -> ! {
                     0,
                     PM_REMOVE,
                 )
-            } != 0
-            {
-                if msg.message == WM_QUIT {
-                    unsafe {
-                        ExitProcess(msg.wParam as u32);
-                    }
-                }
-
-                unsafe {
-                    TranslateMessage(&msg);
-                    DispatchMessageW(&msg);
-                }
             }
+        } != 0
+        {
+            unsafe {
+                if msg.message == WM_QUIT {
+                    ExitProcess(msg.wParam as u32);
+                }
 
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+
+
+        unsafe {
             if GetTickCount64() - last_time < 100 {
                 Sleep(10);
                 continue;
             }
-
-            last_time = GetTickCount64();
-
-            // work flow
-            framebuffer.fill(Pixel::rgb(255,255,255));
-            z_buffer.fill(0.0);
-
-            for i in 0..model.vertex_processed.len() {
-                model.vertex_processed[i].processed = false;
-            }
-
-            for i in 0..model.vertices.len(){
-                let vec = Vec4{
-                    x:model.vertices[i].x_model,
-                    y:model.vertices[i].y_model,
-                    z:model.vertices[i].z_model,
-                    w:1.0
-                };
-                let clip = math::Mat4::mul_vec4(&camera.matrix, vec);
-
-                model.vertex_clips[i].x = clip.x;
-                model.vertex_clips[i].y = clip.y;
-                model.vertex_clips[i].z = clip.z;
-                model.vertex_clips[i].w = clip.w;
-                model.vertex_clips[i].r = model.vertices[i].r as f32 /255.0;
-                model.vertex_clips[i].g = model.vertices[i].g as f32 /255.0;
-                model.vertex_clips[i].b = model.vertices[i].b as f32 /255.0;
-            }
-
-            for i in 0..indices.len()/3{
-                let idx0 = indices[i*3] as usize;
-                let idx1 = indices[i*3+1] as usize;
-                let idx2 = indices[i*3+2] as usize;
-
-                if model.vertex_clips[idx0].z < 0.1 || model.vertex_clips[idx1].z < 0.1 || model.vertex_clips[idx2].z < 0.1 {
-                    continue;
-                };
-
-                if !model.vertex_processed[idx0].processed{
-                    process_vertex(&model.vertex_clips[idx0], &mut model.vertex_processed[idx0])
-                }
-                if !model.vertex_processed[idx1].processed{
-                    process_vertex(&model.vertex_clips[idx1], &mut model.vertex_processed[idx1])
-                }
-                if !model.vertex_processed[idx2].processed{
-                    process_vertex(&model.vertex_clips[idx2], &mut model.vertex_processed[idx2])
-                }
-                rasterize(
-                    & model.vertex_processed[idx0],
-                    & model.vertex_processed[idx1],
-                    & model.vertex_processed[idx2],
-                    framebuffer,
-                    z_buffer
-                );
-
-            }
-
-            present_frame(window,&bitmap_info,framebuffer, FRAME_WIDTH, FRAME_HEIGHT);
-
         }
+
+        last_time = unsafe{GetTickCount64()};
+
+        // work flow
+        framebuffer.fill(Pixel::rgb(255, 255, 255));
+        z_buffer.fill(0.0);
+
+        for i in 0..model.vertex_processed.len() {
+            model.vertex_processed[i].processed = false;
+        }
+
+        for i in 0..model.vertices.len() {
+            let vec = Vec4 {
+                x: model.vertices[i].x_model,
+                y: model.vertices[i].y_model,
+                z: model.vertices[i].z_model,
+                w: 1.0
+            };
+            let clip = math::Mat4::mul_vec4(&camera.matrix, vec);
+
+            model.vertex_clips[i].x = clip.x;
+            model.vertex_clips[i].y = clip.y;
+            model.vertex_clips[i].z = clip.z;
+            model.vertex_clips[i].w = clip.w;
+            model.vertex_clips[i].r = model.vertices[i].r as f32 / 255.0;
+            model.vertex_clips[i].g = model.vertices[i].g as f32 / 255.0;
+            model.vertex_clips[i].b = model.vertices[i].b as f32 / 255.0;
+        }
+
+        for i in 0..model.indices.len() / 3 {
+            let idx0 = model.indices[i * 3] as usize;
+            let idx1 = model.indices[i * 3 + 1] as usize;
+            let idx2 = model.indices[i * 3 + 2] as usize;
+
+            if model.vertex_clips[idx0].z < 0.1 || model.vertex_clips[idx1].z < 0.1 || model.vertex_clips[idx2].z < 0.1 {
+                continue;
+            };
+
+            if !model.vertex_processed[idx0].processed {
+                process_vertex(&model.vertex_clips[idx0], &mut model.vertex_processed[idx0])
+            }
+            if !model.vertex_processed[idx1].processed {
+                process_vertex(&model.vertex_clips[idx1], &mut model.vertex_processed[idx1])
+            }
+            if !model.vertex_processed[idx2].processed {
+                process_vertex(&model.vertex_clips[idx2], &mut model.vertex_processed[idx2])
+            }
+            rasterize(
+                &model.vertex_processed[idx0],
+                &model.vertex_processed[idx1],
+                &model.vertex_processed[idx2],
+                framebuffer,
+                z_buffer
+            );
+        }
+
+        present_frame(window, &bitmap_info, framebuffer, FRAME_WIDTH, FRAME_HEIGHT);
     }
 }
+
 
 fn rasterize(vertex_idx0:&VertexProcessed,vertex_idx1:&VertexProcessed,vertex_idx2:&VertexProcessed, framebuffer:&mut [Pixel], z_buffer:&mut [f32]) {
     let area = edge(
@@ -583,17 +604,21 @@ unsafe extern "system" fn window_proc(
 ) -> LRESULT {
     match msg {
         WM_DESTROY => {
-            PostQuitMessage(0);
-            0
+            unsafe {
+                PostQuitMessage(0);
+                0
+            }
         },
 
         _ => {
-            DefWindowProcW(
-                hwnd,
-                msg,
-                wparam,
-                lparam,
-            )
+            unsafe {
+                DefWindowProcW(
+                    hwnd,
+                    msg,
+                    wparam,
+                    lparam,
+                )
+            }
         }
     }
 }
