@@ -5,6 +5,7 @@
 
 mod math;
 
+use core::ops::Add;
 use crate::math::Vec4;
 use core::panic::PanicInfo;
 use core::ptr::{null, null_mut};
@@ -18,8 +19,8 @@ use windows_sys::Win32::System::Threading::{ExitProcess, Sleep};
 use windows_sys::Win32::UI::WindowsAndMessaging::{AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect, PeekMessageW, PostQuitMessage, RegisterClassExW, ShowWindow, TranslateMessage, MSG, PM_REMOVE, SW_SHOWNORMAL, WM_DESTROY, WM_QUIT, WNDCLASSEXW, WS_OVERLAPPEDWINDOW};
 use windows_sys::w;
 
-const FRAME_HEIGHT: i32 = 1080;//9 * 10;
-const FRAME_WIDTH:i32= 1920;//16*10;
+const FRAME_HEIGHT: i32 = 720;//9 * 10;
+const FRAME_WIDTH:i32= 1280;//16*10;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -95,7 +96,7 @@ struct Camera {
 
 #[unsafe(no_mangle)]
 pub extern "system" fn mainCRTStartup() -> ! {
-    let mut vertices : [VertexModel;3] = [
+    let mut vertices : [VertexModel; 4] = [
         VertexModel{
             x_model: 1.0,
             y_model:-0.5,
@@ -119,10 +120,21 @@ pub extern "system" fn mainCRTStartup() -> ! {
             r: 0,
             g: 0,
             b: 255,
+        },
+        VertexModel{
+            x_model: 1.0,
+            y_model: 0.5,
+            z_model: 4.0,
+            r: 0,
+            g: 0,
+            b: 0,
         }
     ];
 
-    let indices :[u32;3]= [0,1,2];
+    let indices :[u32;6]= [
+        0,1,2,
+        0,1,3
+    ];
 
     let model;
 
@@ -177,6 +189,12 @@ pub extern "system" fn mainCRTStartup() -> ! {
             0,
         );
 
+        let window_width =
+            rect.right - rect.left;
+
+        let window_height =
+            rect.bottom - rect.top;
+
 
         window = CreateWindowExW(
             0,
@@ -185,8 +203,8 @@ pub extern "system" fn mainCRTStartup() -> ! {
             WS_OVERLAPPEDWINDOW,
             0,
             0,
-            1280,
-            720,
+            window_width,
+            window_height,
             null_mut(),
             null_mut(),
             instance,
@@ -209,14 +227,32 @@ pub extern "system" fn mainCRTStartup() -> ! {
                 None => ExitProcess(1),
             };
 
+        let z_buffer_len =
+            match FRAME_HEIGHT.checked_mul(FRAME_WIDTH) {
+                Some(x) => x as usize,
+                None => ExitProcess(1),
+            };
+        let z_buffer_bytes =
+            match z_buffer_len.checked_mul(size_of::<f32>()) {
+                Some(x) => x,
+                None => ExitProcess(1),
+            };
 
-        let heap = HeapAlloc(process_heap, HEAP_ZERO_MEMORY, framebuffer_bytes);
+        let target_screen_buffer_size =
+            match framebuffer_bytes.checked_add(z_buffer_bytes){
+                Some(x) => x,
+                None => ExitProcess(1),
+            };
+
+        let heap = HeapAlloc(process_heap, HEAP_ZERO_MEMORY, target_screen_buffer_size);
         if heap.is_null() {
             ExitProcess(1);
         }
         let frame_buffer_ptr = heap as *mut Pixel;
-        let framebuffer = slice::from_raw_parts_mut(frame_buffer_ptr, framebuffer_len);
+        let z_buffer_ptr = (heap as *mut u8).add(framebuffer_bytes) as *mut f32;
 
+        let framebuffer = slice::from_raw_parts_mut(frame_buffer_ptr, framebuffer_len);
+        let z_buffer = slice::from_raw_parts_mut(z_buffer_ptr, z_buffer_len);
 
         //test----
         let vertex_clips_len = vertices.len();
@@ -321,6 +357,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
 
             // work flow
             framebuffer.fill(Pixel::rgb(255,255,255));
+            z_buffer.fill(0.0);
 
             for i in 0..model.vertex_processed.len() {
                 model.vertex_processed[i].processed = false;
@@ -366,7 +403,8 @@ pub extern "system" fn mainCRTStartup() -> ! {
                     & model.vertex_processed[idx0],
                     & model.vertex_processed[idx1],
                     & model.vertex_processed[idx2],
-                    framebuffer
+                    framebuffer,
+                    z_buffer
                 );
 
             }
@@ -377,7 +415,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
     }
 }
 
-fn rasterize(vertex_idx0:&VertexProcessed,vertex_idx1:&VertexProcessed,vertex_idx2:&VertexProcessed, framebuffer:&mut [Pixel]) {
+fn rasterize(vertex_idx0:&VertexProcessed,vertex_idx1:&VertexProcessed,vertex_idx2:&VertexProcessed, framebuffer:&mut [Pixel], z_buffer:&mut [f32]) {
     let area = edge(
         vertex_idx0.screen_x,
         vertex_idx0.screen_y,
@@ -390,11 +428,7 @@ fn rasterize(vertex_idx0:&VertexProcessed,vertex_idx1:&VertexProcessed,vertex_id
     if area > -0.00001 && area < 0.00001 {
         return;
     }
-    /*let areaDenom = (vertex_idx1.screen_y-vertex_idx2.screen_y) * (vertex_idx0.screen_x-vertex_idx2.screen_x)+ (vertex_idx2.screen_x-vertex_idx1.screen_x) * (vertex_idx0.screen_y-vertex_idx2.screen_y);
 
-    if areaDenom < 0.00001 {
-        return;
-    */
     let min_x = unsafe {
         floorf(
             vertex_idx0.screen_x
@@ -442,16 +476,6 @@ fn rasterize(vertex_idx0:&VertexProcessed,vertex_idx1:&VertexProcessed,vertex_id
             let px_half = px as f32 + 0.5;
             let py_half = py as f32 + 0.5;
 
-
-            /*
-            let w0 = ((vertex_idx1.screen_y - vertex_idx2.screen_y)*(px_half-vertex_idx2.screen_x)+(vertex_idx2.screen_x-vertex_idx1.screen_x)*(py_half-vertex_idx2.screen_y))/areaDenom;
-            let w1 = ((vertex_idx2.screen_y - vertex_idx0.screen_y)*(px_half-vertex_idx2.screen_x)+(vertex_idx0.screen_x-vertex_idx2.screen_x)*(py_half-vertex_idx2.screen_y))/areaDenom;
-            let w2 = 1.0 - w0 - w1;
-
-            if w0 < 0.0 || w1 < 0.0 || w2 < 0.0{
-                continue;
-            }
-*/
             let e0 = edge(
                 vertex_idx1.screen_x,
                 vertex_idx1.screen_y,
@@ -493,28 +517,38 @@ fn rasterize(vertex_idx0:&VertexProcessed,vertex_idx1:&VertexProcessed,vertex_id
             let w2 = e2 * inv_area;
 
 
-            let pix_index = py * FRAME_WIDTH + px;
-
-            let r_over_w = w0 * vertex_idx0.r_over_w + w1 *vertex_idx1.r_over_w+ w2 *vertex_idx2.r_over_w;
-            let g_over_w = w0 * vertex_idx0.g_over_w + w1 *vertex_idx1.g_over_w+ w2 *vertex_idx2.g_over_w;
-            let b_over_w = w0 * vertex_idx0.b_over_w + w1 *vertex_idx1.b_over_w+ w2 *vertex_idx2.b_over_w;
+            let pix_index = (py * FRAME_WIDTH + px) as usize;
 
             let inv_w =
                 w0 * vertex_idx0.inv_w
                     + w1 * vertex_idx1.inv_w
                     + w2 * vertex_idx2.inv_w;
 
-            let r = r_over_w / inv_w;
-            let g = g_over_w / inv_w;
-            let b = b_over_w / inv_w;
+            if inv_w > z_buffer[pix_index] {
+                z_buffer[pix_index] = inv_w;
 
-            let mut pixel = framebuffer[pix_index as usize];
 
-            pixel.r =( r*255.0 ) as u8;
-            pixel.g =( g*255.0 ) as u8;
-            pixel.b =( b*255.0 ) as u8;
+                let r_over_w = w0 * vertex_idx0.r_over_w + w1 * vertex_idx1.r_over_w + w2 * vertex_idx2.r_over_w;
+                let g_over_w = w0 * vertex_idx0.g_over_w + w1 * vertex_idx1.g_over_w + w2 * vertex_idx2.g_over_w;
+                let b_over_w = w0 * vertex_idx0.b_over_w + w1 * vertex_idx1.b_over_w + w2 * vertex_idx2.b_over_w;
 
-            framebuffer[pix_index as usize] = pixel;
+                let inv_w =
+                    w0 * vertex_idx0.inv_w
+                        + w1 * vertex_idx1.inv_w
+                        + w2 * vertex_idx2.inv_w;
+
+                let r = r_over_w / inv_w;
+                let g = g_over_w / inv_w;
+                let b = b_over_w / inv_w;
+
+                let mut pixel = framebuffer[pix_index];
+
+                pixel.r = (r * 255.0) as u8;
+                pixel.g = (g * 255.0) as u8;
+                pixel.b = (b * 255.0) as u8;
+
+                framebuffer[pix_index] = pixel;
+            }
         }
     }
 }
@@ -532,7 +566,7 @@ fn edge(
 fn process_vertex(vertex_clip: &VertexClip, vertex_processed:&mut VertexProcessed){
     vertex_processed.processed = true;
 
-    vertex_processed.screen_x = (vertex_clip.x / vertex_clip.w + 1.0) * 0.5 * FRAME_WIDTH as f32;// чи тут потрібні розміри client space?
+    vertex_processed.screen_x = (vertex_clip.x / vertex_clip.w + 1.0) * 0.5 * FRAME_WIDTH as f32;
     vertex_processed.screen_y = (1.0 - vertex_clip.y / vertex_clip.w) * 0.5 * FRAME_HEIGHT as f32;
 
     vertex_processed.inv_w = 1.0 / vertex_clip.w;
