@@ -7,7 +7,7 @@ mod math;
 
 use crate::math::Vec4;
 use core::panic::PanicInfo;
-use core::ptr::{null, null_mut};
+use core::ptr::{copy, null, null_mut};
 use core::slice;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{BITMAPINFO, BITMAPINFOHEADER, BI_RGB, COLORONCOLOR, DIB_RGB_COLORS, GetDC, RGBQUAD, ReleaseDC, SRCCOPY, SetStretchBltMode, StretchDIBits};
@@ -20,6 +20,10 @@ use windows_sys::w;
 
 const FRAME_HEIGHT: i32 = 720; //9 * 10;
 const FRAME_WIDTH:i32= 1280;//16*10;
+
+const SCREEN_HEIGHT :i32 = 720;
+const SCREEN_WIDTH :i32 = 1280;
+const TO_RADIANS: f32 = 0.017453292519943295;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -121,9 +125,9 @@ pub extern "system" fn mainCRTStartup() -> ! {
             b: 255,
         },
         VertexModel {
-            x_model: 1.0,
-            y_model: 0.5,
-            z_model: 4.0,
+            x_model: 0.0,
+            y_model: 0.0,
+            z_model: -1.0,
             r: 0,
             g: 0,
             b: 0,
@@ -176,8 +180,8 @@ pub extern "system" fn mainCRTStartup() -> ! {
     let mut rect = RECT {
         left: 0,
         top: 0,
-        right: 1280,
-        bottom: 720,
+        right: SCREEN_WIDTH,
+        bottom: SCREEN_HEIGHT,
     };
     unsafe {
         AdjustWindowRectEx(
@@ -219,8 +223,8 @@ pub extern "system" fn mainCRTStartup() -> ! {
 
     let framebuffer_ptr;
     let z_buffer_ptr;
-    let mut framebuffer;
-    let mut z_buffer;
+    let framebuffer;
+    let z_buffer;
     let screen_heap;
     unsafe {
         let framebuffer_len =
@@ -298,7 +302,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
     };
 
 
-    let matrix = math::Mat4::perspective(90 as f32*0.017453292519943295, FRAME_WIDTH as f32 / FRAME_HEIGHT as f32,0.1,100.0);
+    let matrix = math::Mat4::perspective(90f32 * TO_RADIANS, FRAME_WIDTH as f32 / FRAME_HEIGHT as f32, 0.1, 100.0);
     camera = Camera{
         matrix:matrix,
     };
@@ -344,6 +348,45 @@ pub extern "system" fn mainCRTStartup() -> ! {
     };
 
     let mut last_time = unsafe {GetTickCount64()};
+
+    let mut vertex_processed_to_render :[VertexProcessed;4]=[
+
+    VertexProcessed{
+        processed: false,
+        screen_x: 0.0,
+        screen_y: 0.0,
+        inv_w: 0.0,
+        r_over_w: 0.0,
+        g_over_w: 0.0,
+        b_over_w: 0.0,
+    },
+    VertexProcessed{
+        processed: false,
+        screen_x: 0.0,
+        screen_y: 0.0,
+        inv_w: 0.0,
+        r_over_w: 0.0,
+        g_over_w: 0.0,
+        b_over_w: 0.0,
+    },
+    VertexProcessed{
+        processed: false,
+        screen_x: 0.0,
+        screen_y: 0.0,
+        inv_w: 0.0,
+        r_over_w: 0.0,
+        g_over_w: 0.0,
+        b_over_w: 0.0,
+    },
+    VertexProcessed{
+        processed: false,
+        screen_x: 0.0,
+        screen_y: 0.0,
+        inv_w: 0.0,
+        r_over_w: 0.0,
+        g_over_w: 0.0,
+        b_over_w: 0.0,
+    }];
 
     loop {
         while {
@@ -409,33 +452,200 @@ pub extern "system" fn mainCRTStartup() -> ! {
             let idx1 = model.indices[i * 3 + 1] as usize;
             let idx2 = model.indices[i * 3 + 2] as usize;
 
-            if model.vertex_clips[idx0].z < 0.1 || model.vertex_clips[idx1].z < 0.1 || model.vertex_clips[idx2].z < 0.1 {
-                continue;
-            };
+            let out_vertices = near_plane_clip(
+                &model.vertex_clips[idx0],&model.vertex_clips[idx1],&model.vertex_clips[idx2],
+                model.vertex_processed,
+                idx0,
+                idx1,
+                idx2,
 
-            if !model.vertex_processed[idx0].processed {
-                process_vertex(&model.vertex_clips[idx0], &mut model.vertex_processed[idx0])
-            }
-            if !model.vertex_processed[idx1].processed {
-                process_vertex(&model.vertex_clips[idx1], &mut model.vertex_processed[idx1])
-            }
-            if !model.vertex_processed[idx2].processed {
-                process_vertex(&model.vertex_clips[idx2], &mut model.vertex_processed[idx2])
+                &mut vertex_processed_to_render,
+
+                0.1
+            );
+
+            if out_vertices == 0 {
+                continue;
             }
             rasterize(
-                &model.vertex_processed[idx0],
-                &model.vertex_processed[idx1],
-                &model.vertex_processed[idx2],
+                &vertex_processed_to_render[0],
+                &vertex_processed_to_render[1],
+                &vertex_processed_to_render[2],
                 framebuffer,
                 z_buffer
             );
+            if out_vertices == 4 {
+                rasterize(
+                    &vertex_processed_to_render[0],
+                    &vertex_processed_to_render[2],
+                    &vertex_processed_to_render[3],
+                    framebuffer,
+                    z_buffer
+                );
+            }
+
         }
 
         present_frame(window, &bitmap_info, framebuffer, FRAME_WIDTH, FRAME_HEIGHT);
     }
 }
 
+fn near_plane_clip(
+    clip0: &VertexClip,
+    clip1: &VertexClip,
+    clip2: &VertexClip,
 
+    processed_cache: &mut [VertexProcessed],
+    idx0: usize,
+    idx1: usize,
+    idx2: usize,
+
+    out: &mut [VertexProcessed; 4],
+    near:f32
+) -> u8{
+    let mut count = 0;
+
+    // A -> B
+    clip_edge(
+        clip0,
+        clip1,
+        &mut processed_cache[idx1],
+        out,
+        &mut count,
+        near,
+    );
+
+    // B -> C
+    clip_edge(
+        clip1,
+        clip2,
+        &mut processed_cache[idx2],
+        out,
+        &mut count,
+        near,
+    );
+
+    // C -> A
+    clip_edge(
+        clip2,
+        clip0,
+        &mut processed_cache[idx0],
+        out,
+        &mut count,
+        near,
+    );
+
+    count as u8
+}
+fn clip_edge(
+    current: &VertexClip,
+    next: &VertexClip,
+
+    next_cache: &mut VertexProcessed,
+
+    out: &mut [VertexProcessed; 4],
+    count: &mut usize,
+
+    near: f32,
+) {
+    let current_inside = current.w >= near;
+    let next_inside = next.w >= near;
+
+    match (current_inside, next_inside) {
+
+        // inside -> inside
+        (true, true) => {
+            emit_original(
+                next,
+                next_cache,
+                out,
+                count,
+            );
+        }
+
+        // inside -> outside
+        (true, false) => {
+            emit_intersection(
+                current,
+                next,
+                out,
+                count,
+                near,
+            );
+        }
+
+        // outside -> inside
+        (false, true) => {
+            emit_intersection(
+                current,
+                next,
+                out,
+                count,
+                near,
+            );
+
+            emit_original(
+                next,
+                next_cache,
+                out,
+                count,
+            );
+        }
+
+        // outside -> outside
+        (false, false) => {}
+    }
+}
+
+fn emit_original(
+    clip: &VertexClip,
+    cache: &mut VertexProcessed,
+
+    out: &mut [VertexProcessed; 4],
+    count: &mut usize,
+) {
+    if !cache.processed {
+        process_vertex(
+            clip,
+            cache,
+        );
+    }
+
+    out[*count] = *cache;
+    *count += 1;
+}
+fn emit_intersection(
+    a: &VertexClip,
+    b: &VertexClip,
+
+    out: &mut [VertexProcessed; 4],
+    count: &mut usize,
+
+    near: f32,
+) {
+    let t =
+        (near - a.w)
+            / (b.w - a.w);
+
+    let intersection = VertexClip {
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+        z: a.z + (b.z - a.z) * t,
+
+        w: near,
+
+        r: a.r + (b.r - a.r) * t,
+        g: a.g + (b.g - a.g) * t,
+        b: a.b + (b.b - a.b) * t,
+    };
+
+    process_vertex(
+        &intersection,
+        &mut out[*count],
+    );
+
+    *count += 1;
+}
 fn rasterize(vertex_idx0:&VertexProcessed,vertex_idx1:&VertexProcessed,vertex_idx2:&VertexProcessed, framebuffer:&mut [Pixel], z_buffer:&mut [f32]) {
     let area = edge(
         vertex_idx0.screen_x,
