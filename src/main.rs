@@ -4,6 +4,8 @@
 //extern crate alloc;
 
 mod math;
+mod rasrerizator;
+mod clipping;
 
 use crate::math::{Mat4, Vec4};
 use core::panic::PanicInfo;
@@ -17,6 +19,9 @@ use windows_sys::Win32::System::SystemInformation::GetTickCount64;
 use windows_sys::Win32::System::Threading::{ExitProcess, Sleep};
 use windows_sys::Win32::UI::WindowsAndMessaging::{AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, RegisterClassExW, SW_SHOWNORMAL, ShowWindow, TranslateMessage, WM_DESTROY, WM_QUIT, WNDCLASSEXW, WS_OVERLAPPEDWINDOW};
 use windows_sys::w;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_A, VK_D, VK_R, VK_S, VK_SHIFT, VK_SPACE, VK_W};
+use crate::clipping::near_plane_clip;
+use crate::rasrerizator::{edge, rasterize};
 
 const FRAME_HEIGHT: i32 = 720; //9 * 10;
 const FRAME_WIDTH:i32= 1280;//16*10;
@@ -343,17 +348,13 @@ pub extern "system" fn mainCRTStartup() -> ! {
         hIconSm: null_mut(),
     };
 
-    let atom = unsafe {
-        RegisterClassExW(&window_class)
-    };
-
-    if atom == 0 {
-        unsafe {
-            ExitProcess(1);
+    unsafe {
+        let atom = RegisterClassExW(&window_class);
+        if atom == 0 {
+            ExitProcess(1)
         }
     }
 
-    let window;
 
     let mut rect = RECT {
         left: 0,
@@ -370,15 +371,12 @@ pub extern "system" fn mainCRTStartup() -> ! {
         );
     }
 
-    let window_width =
-        rect.right - rect.left;
+    let window_width = rect.right - rect.left;
+    let window_height = rect.bottom - rect.top;
 
-    let window_height =
-        rect.bottom - rect.top;
-
-
-    window = unsafe {
-        CreateWindowExW(
+    let window;
+    unsafe {
+        window = CreateWindowExW(
             0,
             window_class_name,
             w!("Rust no_std Renderer"),
@@ -391,11 +389,12 @@ pub extern "system" fn mainCRTStartup() -> ! {
             null_mut(),
             instance,
             null(),
-        )
-    };
-    if window.is_null() {
-        unsafe { ExitProcess(2); }
+        );
+        if window.is_null() {
+            ExitProcess(1)
+        }
     }
+
 
     let process_heap = unsafe { GetProcessHeap() };
 
@@ -473,14 +472,15 @@ pub extern "system" fn mainCRTStartup() -> ! {
         vertex_processed = slice::from_raw_parts_mut(vertex_processed_ptr, vertex_processed_len);
     }
 
-    let model = Mesh {
-        vertices: & mut vertices,
-        vertex_clips: &mut vertex_clips,
-        vertex_processed:&mut vertex_processed,
-        indices: & indices,
-    };
-
-    temp_registry = [model];
+    {
+        let mesh = Mesh {
+            vertices: &mut vertices,
+            vertex_clips: &mut vertex_clips,
+            vertex_processed: &mut vertex_processed,
+            indices: &indices,
+        };
+        temp_registry = [mesh];
+    }
 
 
     objects = [
@@ -519,10 +519,8 @@ pub extern "system" fn mainCRTStartup() -> ! {
     ];
 
 
-    //let matrix = Mat4::perspective(90f32 * TO_RADIANS, FRAME_WIDTH as f32 / FRAME_HEIGHT as f32, 0.1, 100.0);
     camera = Camera::new(90f32 * TO_RADIANS, 0.1, 100.0);
     camera.rebuild_projection(FRAME_WIDTH as f32 / FRAME_HEIGHT as f32);
-    //----
 
 
     let bitmap_info = BITMAPINFO {
@@ -553,19 +551,15 @@ pub extern "system" fn mainCRTStartup() -> ! {
         }],
     };
 
+    let mut msg: MSG;
     unsafe {
         ShowWindow(window, SW_SHOWNORMAL);
+        msg = core::mem::zeroed()
     }
 
-    let mut msg: MSG = {
-        unsafe {
-            core::mem::zeroed()
-        }
-    };
 
     let mut last_time = unsafe {GetTickCount64()};
     let mut delta_time:f32 = 0.0;
-
     let mut vertex_processed_to_render :[VertexProcessed;4]=[
 
     VertexProcessed{
@@ -605,8 +599,6 @@ pub extern "system" fn mainCRTStartup() -> ! {
         b_over_w: 0.0,
     }];
 
-    let mut tick_count = 0;
-    let start_time = unsafe{GetTickCount64()};
 
     loop {
         while {
@@ -639,12 +631,6 @@ pub extern "system" fn mainCRTStartup() -> ! {
             }
         }
 
-
-/*
-        if unsafe{ GetTickCount64()} - start_time >= 1000 {
-            unsafe{ExitProcess(tick_count)}
-        }*/
-        tick_count += 1;
         delta_time = (unsafe{GetTickCount64()} - last_time) as f32 /1000.0;
         last_time = unsafe{GetTickCount64()};
 
@@ -652,11 +638,34 @@ pub extern "system" fn mainCRTStartup() -> ! {
         framebuffer.fill(Pixel::rgb(255, 255, 255));
         z_buffer.fill(0.0);
 
+        unsafe {
+            if GetAsyncKeyState(VK_D as i32) < 0 {
+                camera.x += delta_time*10.0;
+                camera.view_dirty = true;
+            }else if GetAsyncKeyState(VK_A as i32) < 0 {
+                camera.x -= delta_time*10.0;
+                camera.view_dirty = true;
+            }
 
+            if GetAsyncKeyState(VK_W as i32) < 0 {
+                camera.z += delta_time*10.0;
+                camera.view_dirty = true;
+            }else if GetAsyncKeyState(VK_S as i32) < 0 {
+                camera.z -= delta_time*10.0;
+                camera.view_dirty = true;
+            }
+
+            if GetAsyncKeyState(VK_SPACE as i32) < 0 {
+                camera.y += delta_time*10.0;
+                camera.view_dirty = true;
+            }else if GetAsyncKeyState(VK_SHIFT as i32) < 0 {
+                camera.y -= delta_time*10.0;
+                camera.view_dirty = true;
+            }
+
+        }
         objects[0].transform.rotation_y += 10.0 * delta_time*TO_RADIANS;
         objects[0].transform.dirty = true;
-        //camera.yaw += delta_time;
-        //camera.view_dirty =true;
 
 
         if camera.view_dirty || camera.projection_dirty {
@@ -665,7 +674,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
             camera.rebuild_view_projection()
         }
         for object_idx in 0..objects.len() {
-            let mut object = &mut objects[object_idx];
+            let object = &mut objects[object_idx];
             let mesh =&mut temp_registry[object.mesh_id];
 
 
@@ -702,7 +711,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
                 let idx1 = mesh.indices[i * 3 + 1] as usize;
                 let idx2 = mesh.indices[i * 3 + 2] as usize;
 
-                let out_vertices = near_plane_clip(
+                let out_vertices =  near_plane_clip(
                     &mesh.vertex_clips[idx0], &mesh.vertex_clips[idx1], &mesh.vertex_clips[idx2],
                     mesh.vertex_processed,
                     idx0,
@@ -739,310 +748,6 @@ pub extern "system" fn mainCRTStartup() -> ! {
     }
 }
 
-fn near_plane_clip(
-    clip0: &VertexClip,
-    clip1: &VertexClip,
-    clip2: &VertexClip,
-
-    processed_cache: &mut [VertexProcessed],
-    idx0: usize,
-    idx1: usize,
-    idx2: usize,
-
-    out: &mut [VertexProcessed; 4],
-    near:f32
-) -> u8{
-    let mut count = 0;
-
-    // A -> B
-    clip_edge(
-        clip0,
-        clip1,
-        &mut processed_cache[idx1],
-        out,
-        &mut count,
-        near,
-    );
-
-    // B -> C
-    clip_edge(
-        clip1,
-        clip2,
-        &mut processed_cache[idx2],
-        out,
-        &mut count,
-        near,
-    );
-
-    // C -> A
-    clip_edge(
-        clip2,
-        clip0,
-        &mut processed_cache[idx0],
-        out,
-        &mut count,
-        near,
-    );
-
-    count as u8
-}
-fn clip_edge(
-    current: &VertexClip,
-    next: &VertexClip,
-
-    next_cache: &mut VertexProcessed,
-
-    out: &mut [VertexProcessed; 4],
-    count: &mut usize,
-
-    near: f32,
-) {
-    let current_inside = current.w >= near;
-    let next_inside = next.w >= near;
-
-    match (current_inside, next_inside) {
-
-        // inside -> inside
-        (true, true) => {
-            emit_original(
-                next,
-                next_cache,
-                out,
-                count,
-            );
-        }
-
-        // inside -> outside
-        (true, false) => {
-            emit_intersection(
-                current,
-                next,
-                out,
-                count,
-                near,
-            );
-        }
-
-        // outside -> inside
-        (false, true) => {
-            emit_intersection(
-                current,
-                next,
-                out,
-                count,
-                near,
-            );
-
-            emit_original(
-                next,
-                next_cache,
-                out,
-                count,
-            );
-        }
-
-        // outside -> outside
-        (false, false) => {}
-    }
-}
-
-fn emit_original(
-    clip: &VertexClip,
-    cache: &mut VertexProcessed,
-
-    out: &mut [VertexProcessed; 4],
-    count: &mut usize,
-) {
-    if !cache.processed {
-        process_vertex(
-            clip,
-            cache,
-        );
-    }
-
-    out[*count] = *cache;
-    *count += 1;
-}
-fn emit_intersection(
-    a: &VertexClip,
-    b: &VertexClip,
-
-    out: &mut [VertexProcessed; 4],
-    count: &mut usize,
-
-    near: f32,
-) {
-    let t =
-        (near - a.w)
-            / (b.w - a.w);
-
-    let intersection = VertexClip {
-        x: a.x + (b.x - a.x) * t,
-        y: a.y + (b.y - a.y) * t,
-        z: a.z + (b.z - a.z) * t,
-
-        w: near,
-
-        r: a.r + (b.r - a.r) * t,
-        g: a.g + (b.g - a.g) * t,
-        b: a.b + (b.b - a.b) * t,
-    };
-
-    process_vertex(
-        &intersection,
-        &mut out[*count],
-    );
-
-    *count += 1;
-}
-fn rasterize(vertex_idx0:&VertexProcessed,vertex_idx1:&VertexProcessed,vertex_idx2:&VertexProcessed, framebuffer:&mut [Pixel], z_buffer:&mut [f32]) {
-    let area = edge(
-        vertex_idx0.screen_x,
-        vertex_idx0.screen_y,
-        vertex_idx1.screen_x,
-        vertex_idx1.screen_y,
-        vertex_idx2.screen_x,
-        vertex_idx2.screen_y,
-    );
-
-    if area > -0.00001 && area < 0.00001 {
-        return;
-    }
-
-    let min_x = unsafe {
-        floorf(
-            vertex_idx0.screen_x
-                .min(vertex_idx1.screen_x)
-                .min(vertex_idx2.screen_x)
-                .max(0.0)
-        ) as i32
-    };
-
-    let max_x = unsafe {
-        ceilf(
-            vertex_idx0.screen_x
-                .max(vertex_idx1.screen_x)
-                .max(vertex_idx2.screen_x)
-                .min((FRAME_WIDTH - 1) as f32)
-        ) as i32
-    };
-
-    let min_y = unsafe {
-        floorf(
-            vertex_idx0.screen_y
-                .min(vertex_idx1.screen_y)
-                .min(vertex_idx2.screen_y)
-                .max(0.0)
-        ) as i32
-    };
-
-    let max_y = unsafe {
-        ceilf(
-            vertex_idx0.screen_y
-                .max(vertex_idx1.screen_y)
-                .max(vertex_idx2.screen_y)
-                .min((FRAME_HEIGHT - 1) as f32)
-        ) as i32
-    };
-
-
-
-    if min_x>max_x || min_y>max_y {
-        return;
-    }
-
-    for py in min_y..=max_y {
-        for px in min_x..=max_x {
-            let px_half = px as f32 + 0.5;
-            let py_half = py as f32 + 0.5;
-
-            let e0 = edge(
-                vertex_idx1.screen_x,
-                vertex_idx1.screen_y,
-                vertex_idx2.screen_x,
-                vertex_idx2.screen_y,
-                px_half,
-                py_half,
-            );
-
-            let e1 = edge(
-                vertex_idx2.screen_x,
-                vertex_idx2.screen_y,
-                vertex_idx0.screen_x,
-                vertex_idx0.screen_y,
-                px_half,
-                py_half,
-            );
-
-            let e2 = edge(
-                vertex_idx0.screen_x,
-                vertex_idx0.screen_y,
-                vertex_idx1.screen_x,
-                vertex_idx1.screen_y,
-                px_half,
-                py_half,
-            );
-            if area > 0.0 {
-                if e0 < 0.0 || e1 < 0.0 || e2 < 0.0 {
-                    continue;
-                }
-            } else {
-                if e0 > 0.0 || e1 > 0.0 || e2 > 0.0 {
-                    continue;
-                }
-            }
-            let inv_area = 1.0 / area;
-            let w0 = e0 * inv_area;
-            let w1 = e1 * inv_area;
-            let w2 = e2 * inv_area;
-
-
-            let pix_index = (py * FRAME_WIDTH + px) as usize;
-
-            let inv_w =
-                w0 * vertex_idx0.inv_w
-                    + w1 * vertex_idx1.inv_w
-                    + w2 * vertex_idx2.inv_w;
-
-            if inv_w > z_buffer[pix_index] {
-                z_buffer[pix_index] = inv_w;
-
-
-                let r_over_w = w0 * vertex_idx0.r_over_w + w1 * vertex_idx1.r_over_w + w2 * vertex_idx2.r_over_w;
-                let g_over_w = w0 * vertex_idx0.g_over_w + w1 * vertex_idx1.g_over_w + w2 * vertex_idx2.g_over_w;
-                let b_over_w = w0 * vertex_idx0.b_over_w + w1 * vertex_idx1.b_over_w + w2 * vertex_idx2.b_over_w;
-
-                let inv_w =
-                    w0 * vertex_idx0.inv_w
-                        + w1 * vertex_idx1.inv_w
-                        + w2 * vertex_idx2.inv_w;
-
-                let r = r_over_w / inv_w;
-                let g = g_over_w / inv_w;
-                let b = b_over_w / inv_w;
-
-                let mut pixel = framebuffer[pix_index];
-
-                pixel.r = (r * 255.0) as u8;
-                pixel.g = (g * 255.0) as u8;
-                pixel.b = (b * 255.0) as u8;
-
-                framebuffer[pix_index] = pixel;
-            }
-        }
-    }
-}
-
-fn edge(
-    ax: f32,
-    ay: f32,
-    bx: f32,
-    by: f32,
-    px: f32,
-    py: f32,
-) -> f32 {
-    (bx - ax) * (py - ay) - (by - ay) * (px - ax)
-}
 fn process_vertex(vertex_clip: &VertexClip, vertex_processed:&mut VertexProcessed){
     vertex_processed.processed = true;
 
@@ -1114,8 +819,6 @@ fn present_frame(
             COLORONCOLOR,
         );
 
-        //SetStretchBltMode(hdc, HALFTONE);
-        //SetBrushOrgEx(hdc, 0, 0, null_mut());
 
         let lines = StretchDIBits(
             hdc,
