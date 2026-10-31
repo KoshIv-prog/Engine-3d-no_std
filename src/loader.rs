@@ -27,7 +27,7 @@ use windows_sys::Win32::System::Memory::{
     HEAP_ZERO_MEMORY,
 };
 
-struct FileBuffer {
+pub struct FileBuffer {
     ptr: *mut u8,
     len: usize,
 }
@@ -40,6 +40,12 @@ impl FileBuffer {
                 self.len,
             )
         }
+    }
+
+    pub fn text(&self) -> Option<&str> {
+        core::str::from_utf8(
+            self.bytes()
+        ).ok()
     }
 }
 
@@ -57,7 +63,7 @@ impl Drop for FileBuffer {
     }
 }
 
-fn read_entire_file(
+pub fn read_entire_file(
     path: PCWSTR,
 ) -> Option<FileBuffer> {
     unsafe {

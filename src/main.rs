@@ -6,8 +6,16 @@
 mod math;
 mod rasrerizator;
 mod clipping;
+mod loader;
+mod objreader;
+mod mesh;
+mod renderer_workspace;
 
+use crate::clipping::near_plane_clip;
 use crate::math::{Mat4, Vec4};
+use crate::mesh::Mesh;
+use crate::objreader::{parse_obj};
+use crate::rasrerizator::rasterize;
 use core::panic::PanicInfo;
 use core::ptr::{null, null_mut};
 use core::slice;
@@ -17,11 +25,10 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Memory::{GetProcessHeap, HEAP_ZERO_MEMORY, HeapAlloc};
 use windows_sys::Win32::System::SystemInformation::GetTickCount64;
 use windows_sys::Win32::System::Threading::{ExitProcess, Sleep};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_A, VK_D, VK_S, VK_SHIFT, VK_SPACE, VK_W};
 use windows_sys::Win32::UI::WindowsAndMessaging::{AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, RegisterClassExW, SW_SHOWNORMAL, ShowWindow, TranslateMessage, WM_DESTROY, WM_QUIT, WNDCLASSEXW, WS_OVERLAPPEDWINDOW};
+use windows_sys::core::PCWSTR;
 use windows_sys::w;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_A, VK_D, VK_R, VK_S, VK_SHIFT, VK_SPACE, VK_W};
-use crate::clipping::near_plane_clip;
-use crate::rasrerizator::{edge, rasterize};
 
 const FRAME_HEIGHT: i32 = 720; //9 * 10;
 const FRAME_WIDTH:i32= 1280;//16*10;
@@ -87,7 +94,7 @@ struct VertexProcessed{
     b_over_w:f32
 }
 
-struct Mesh<'a> {
+struct Mesh_depr<'a> {
     vertices:&'a [VertexModel],
     vertex_clips:&'a mut [VertexClip],
     vertex_processed:&'a mut [VertexProcessed],
@@ -322,7 +329,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
 
 
 
-    let mut temp_registry:[Mesh;1];
+    let mut temp_registry:[Mesh_depr;1];
 
     let mut camera;
     let mut objects;
@@ -473,7 +480,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
     }
 
     {
-        let mesh = Mesh {
+        let mesh = Mesh_depr {
             vertices: &mut vertices,
             vertex_clips: &mut vertex_clips,
             vertex_processed: &mut vertex_processed,
@@ -759,6 +766,74 @@ fn process_vertex(vertex_clip: &VertexClip, vertex_processed:&mut VertexProcesse
     vertex_processed.r_over_w = vertex_clip.r * vertex_processed.inv_w;
     vertex_processed.g_over_w = vertex_clip.g * vertex_processed.inv_w;
     vertex_processed.b_over_w = vertex_clip.b * vertex_processed.inv_w;
+}
+
+fn load_obj(path: PCWSTR) -> Option<Mesh> {
+    let file = loader::read_entire_file(path)?;
+    let text = file.text()?;
+
+    let counts = objreader::count_obj(text)?;
+
+    let mut mesh;
+
+    {
+        let model_vertices_bytes =
+            counts.vertices
+                .checked_mul(size_of::<VertexModel>())?;
+
+        let indices_offset =
+            align_up(
+                model_vertices_bytes,
+                align_of::<u32>(),
+            )?;
+
+        let indices_bytes =
+            counts.indices
+                .checked_mul(size_of::<u32>())?;
+
+        let target_bytes =
+            indices_offset
+                .checked_add(indices_bytes)?;
+
+        let heap = unsafe {
+            HeapAlloc(
+                GetProcessHeap(),
+                HEAP_ZERO_MEMORY,
+                target_bytes,
+            )
+        };
+
+        if heap.is_null() {
+            return None;
+        }
+
+        mesh = Mesh {
+            heap,
+            vertex_count: counts.vertices,
+            index_count: counts.indices,
+            indices_offset,
+        };
+    }
+
+    {
+        let mut load_view =
+            mesh.load_view();
+
+        parse_obj(
+            text,
+            &mut load_view,
+        )?;
+    }
+
+    Some(mesh)
+}
+
+fn align_up(value: usize, alignment: usize) -> Option<usize> {
+    let mask = alignment - 1;
+
+    value
+        .checked_add(mask)
+        .map(|x| x & !mask)
 }
 unsafe extern "system" fn window_proc(
     hwnd: HWND,
