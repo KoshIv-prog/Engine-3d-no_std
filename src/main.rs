@@ -10,6 +10,7 @@ mod loader;
 mod objreader;
 mod mesh;
 mod renderer_workspace;
+pub mod camera;
 
 use crate::clipping::near_plane_clip;
 use crate::math::{Mat4, Vec4};
@@ -29,6 +30,8 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_A, VK
 use windows_sys::Win32::UI::WindowsAndMessaging::{AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, RegisterClassExW, SW_SHOWNORMAL, ShowWindow, TranslateMessage, WM_DESTROY, WM_QUIT, WNDCLASSEXW, WS_OVERLAPPEDWINDOW};
 use windows_sys::core::PCWSTR;
 use windows_sys::w;
+use crate::camera::Camera;
+use crate::renderer_workspace::RendererWorkspace;
 
 const FRAME_HEIGHT: i32 = 720; //9 * 10;
 const FRAME_WIDTH:i32= 1280;//16*10;
@@ -94,13 +97,6 @@ struct VertexProcessed{
     b_over_w:f32
 }
 
-struct Mesh_depr<'a> {
-    vertices:&'a [VertexModel],
-    vertex_clips:&'a mut [VertexClip],
-    vertex_processed:&'a mut [VertexProcessed],
-
-    indices:&'a [u32],
-}
 struct Object {
     mesh_id: usize,
     transform: Transform,
@@ -133,93 +129,6 @@ impl Object {
         transform.dirty = false;
     }
 }
-struct Camera {
-    x: f32,
-    y: f32,
-    z: f32,
-
-    yaw: f32,
-    pitch: f32,
-    roll: f32,
-
-    fov_x: f32,
-    near: f32,
-    far: f32,
-
-    view: Mat4,
-    projection: Mat4,
-    view_projection: Mat4,
-
-    view_dirty: bool,
-    projection_dirty: bool,
-}
-impl Camera {
-    fn new(
-        fov_x: f32,
-        near: f32,
-        far: f32,
-    ) -> Self {
-        Self {
-            x: 0.0,
-            y: 0.0,
-            z: 0.0,
-
-            pitch: 0.0,
-            yaw: 0.0,
-            roll: 0.0,
-
-            fov_x,
-            near,
-            far,
-
-            view: Mat4::identity(),
-            projection: Mat4::identity(),
-            view_projection: Mat4::identity(),
-
-            view_dirty: true,
-            projection_dirty: true,
-        }
-    }
-    fn rebuild_view(&mut self) {
-        let translation = Mat4::translation(
-            -self.x,
-            -self.y,
-            -self.z,
-        );
-
-        let rx = Mat4::rotation_x(-self.pitch);
-        let ry = Mat4::rotation_y(-self.yaw);
-        let rz = Mat4::rotation_z(-self.roll);
-
-        let temp0 = Mat4::mul(&rz, &translation);
-        let temp1 = Mat4::mul(&ry, &temp0);
-
-        self.view = Mat4::mul(&rx, &temp1);
-
-        self.view_dirty = false;
-    }
-    fn rebuild_projection(
-        &mut self,
-        aspect: f32,
-    ) {
-        self.projection = Mat4::perspective(
-            self.fov_x,
-            aspect,
-            self.near,
-            self.far,
-        );
-
-        self.projection_dirty = false;
-    }
-    fn rebuild_view_projection(&mut self) {
-        self.view_projection =
-            Mat4::mul(
-                &self.projection,
-                &self.view,
-            );
-    }
-}
-
 struct Transform {
     x: f32,
     y: f32,
@@ -240,102 +149,14 @@ struct Transform {
 
 #[unsafe(no_mangle)]
 pub extern "system" fn mainCRTStartup() -> ! {
-    let mut vertices: [VertexModel; 8] = [
-        VertexModel {
-            x_model: -0.5,
-            y_model: 1.0,
-            z_model: 0.5,
-            r: 255,
-            g: 0,
-            b: 0,
-        },
-        VertexModel {
-            x_model: 0.5,
-            y_model: 1.0,
-            z_model: 0.5,
-            r: 0,
-            g: 255,
-            b: 0,
-        },
-        VertexModel {
-            x_model: 0.5,
-            y_model: 1.0,
-            z_model: -0.5,
-            r: 0,
-            g: 0,
-            b: 255,
-        },
-        VertexModel {
-            x_model: -0.5,
-            y_model: 1.0,
-            z_model: -0.5,
-            r: 255,
-            g: 255,
-            b: 0,
-        },
-        VertexModel {
-            x_model: -0.5,
-            y_model: 0.0,
-            z_model: 0.5,
-            r: 255,
-            g: 0,
-            b: 255,
-        },
-        VertexModel {
-            x_model: 0.5,
-            y_model: 0.0,
-            z_model: 0.5,
-            r: 0,
-            g: 255,
-            b: 255,
-        },
-        VertexModel {
-            x_model: 0.5,
-            y_model: 0.0,
-            z_model: -0.5,
-            r: 255,
-            g: 255,
-            b: 255,
-        },
-        VertexModel {
-            x_model: -0.5,
-            y_model: 0.0,
-            z_model: -0.5,
-            r: 255,
-            g: 128,
-            b: 128,
-        }
-    ];
+    let mut temp_registry:[Mesh;1];
+    let mut render_workspace = RendererWorkspace::new();
 
-    let indices: [u32; 36] = [
-        0, 1, 2,
-        0, 2, 3,
-
-        4, 5, 6,
-        4, 6, 7,
-
-        0, 1, 4,
-        1, 4, 5,
-
-        2, 3, 6,
-        3, 6, 7,
-
-        1, 2, 5,
-        2, 5, 6,
-
-        0, 3, 4,
-        3, 4, 7
-    ];
-
-
-
-    let mut temp_registry:[Mesh_depr;1];
-
-    let mut camera;
     let mut objects;
+    let mut camera;
+
 
     let window_class_name = w!("my window class");
-
     let instance = unsafe {
         GetModuleHandleW(null())
     };
@@ -450,44 +271,15 @@ pub extern "system" fn mainCRTStartup() -> ! {
         z_buffer = slice::from_raw_parts_mut(z_buffer_ptr, z_buffer_len);
     }
 
-    //test----
 
-    let mut vertex_clips;
-    let mut vertex_processed;
-    let vertex_clips_ptr;
-    let vertex_processed_ptr;
-    let model_heap;
-
-    unsafe{
-        let vertex_clips_len = vertices.len();
-        let vertex_clips_bytes = vertex_clips_len * size_of::<VertexClip>();
-
-        let vertex_processed_len = vertices.len();
-        let vertex_processed_bytes = vertex_processed_len * size_of::<VertexProcessed>();
-
-        let sum_byte = vertex_processed_bytes + vertex_clips_bytes;
-        model_heap = HeapAlloc(process_heap, HEAP_ZERO_MEMORY, sum_byte);
-
-        if model_heap.is_null() {
-            ExitProcess(1);
-        }
-
-        vertex_clips_ptr = model_heap as *mut VertexClip;
-        vertex_processed_ptr = (model_heap as *mut u8).add(vertex_clips_bytes) as *mut VertexProcessed;
-
-        vertex_clips = slice::from_raw_parts_mut(vertex_clips_ptr, vertex_clips_len);
-        vertex_processed = slice::from_raw_parts_mut(vertex_processed_ptr, vertex_processed_len);
-    }
-
-    {
-        let mesh = Mesh_depr {
-            vertices: &mut vertices,
-            vertex_clips: &mut vertex_clips,
-            vertex_processed: &mut vertex_processed,
-            indices: &indices,
-        };
-        temp_registry = [mesh];
-    }
+    temp_registry = match load_obj(w!("Arch.obj")){
+        None => unsafe{ExitProcess(1);}
+        Some(mesh) => [mesh]
+    };
+    match render_workspace.ensure_capacity(temp_registry[0].vertex_count){
+        Ok(_) => {}
+        Err(e) => {unsafe {ExitProcess(1);}}
+    };
 
 
     objects = [
@@ -506,7 +298,8 @@ pub extern "system" fn mainCRTStartup() -> ! {
                 matrix: Mat4::identity(),
                 dirty: true,
             },
-        },
+        }
+        /*,
         Object{
             mesh_id: 0,
             transform: Transform {
@@ -522,7 +315,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
                 matrix: Mat4::identity(),
                 dirty: true,
             },
-        }
+        }*/
     ];
 
 
@@ -682,11 +475,15 @@ pub extern "system" fn mainCRTStartup() -> ! {
         }
         for object_idx in 0..objects.len() {
             let object = &mut objects[object_idx];
-            let mesh =&mut temp_registry[object.mesh_id];
+            let mesh =&mut temp_registry[object.mesh_id].mesh_view();
 
+            let mut view_workspace = match render_workspace.get_view_workspace(mesh.vertices.len()){
+                Some(workspace) => workspace,
+                None => continue,
+            };
 
-            for i in 0..mesh.vertex_processed.len() {
-                mesh.vertex_processed[i].processed = false;
+            for i in 0..view_workspace.vertex_processed.len() {
+                view_workspace.vertex_processed[i].processed = false;
             }
 
             if object.transform.dirty{
@@ -704,13 +501,13 @@ pub extern "system" fn mainCRTStartup() -> ! {
                 };
                 let clip = Mat4::mul_vec4(&final_transform, vec);
 
-                mesh.vertex_clips[i].x = clip.x;
-                mesh.vertex_clips[i].y = clip.y;
-                mesh.vertex_clips[i].z = clip.z;
-                mesh.vertex_clips[i].w = clip.w;
-                mesh.vertex_clips[i].r = mesh.vertices[i].r as f32 / 255.0;
-                mesh.vertex_clips[i].g = mesh.vertices[i].g as f32 / 255.0;
-                mesh.vertex_clips[i].b = mesh.vertices[i].b as f32 / 255.0;
+                view_workspace.vertex_clip[i].x = clip.x;
+                view_workspace.vertex_clip[i].y = clip.y;
+                view_workspace.vertex_clip[i].z = clip.z;
+                view_workspace.vertex_clip[i].w = clip.w;
+                view_workspace.vertex_clip[i].r = mesh.vertices[i].r as f32 / 255.0;
+                view_workspace.vertex_clip[i].g = mesh.vertices[i].g as f32 / 255.0;
+                view_workspace.vertex_clip[i].b = mesh.vertices[i].b as f32 / 255.0;
             }
 
             for i in 0..mesh.indices.len() / 3 {
@@ -719,8 +516,8 @@ pub extern "system" fn mainCRTStartup() -> ! {
                 let idx2 = mesh.indices[i * 3 + 2] as usize;
 
                 let out_vertices =  near_plane_clip(
-                    &mesh.vertex_clips[idx0], &mesh.vertex_clips[idx1], &mesh.vertex_clips[idx2],
-                    mesh.vertex_processed,
+                    &view_workspace.vertex_clip[idx0], &view_workspace.vertex_clip[idx1], &view_workspace.vertex_clip[idx2],
+                    view_workspace.vertex_processed,
                     idx0,
                     idx1,
                     idx2,

@@ -77,71 +77,6 @@ pub fn count_obj(
     })
 }
 
-/*
-pub fn parse_obg(text :&str, mesh_view: &mut MeshLoadView) -> Option<()> {
-    let mut vertex_id :usize = 0;
-    let mut indice_id :usize = 0;
-
-    for line in text.lines() {
-        let mut parts = line.split_ascii_whitespace();
-
-        match parts.next() {
-            Some("v") => {
-
-                let part =parts.next()?;
-                let x = match part.parse::<f32>() {
-                    Ok(x) => x,
-                    Err(_) => {
-                        return None;
-                    }
-                };
-                let part =parts.next()?;
-                let y = match part.parse::<f32>() {
-                    Ok(x) => x,
-                    Err(_) => {
-                        return None;
-                    }
-                };
-                let part =parts.next()?;
-                let z = match part.parse::<f32>() {
-                    Ok(x) => x,
-                    Err(_) => {
-                        return None;
-                    }
-                };
-                mesh_view.vertices[vertex_id] = VertexModel {
-                    x_model: x,
-                    y_model: y,
-                    z_model: z,
-                    r: 255,
-                    g: 255,
-                    b: 255,
-                };
-                vertex_id = vertex_id.checked_add(1)?;
-            }
-
-            Some("f") => {
-                for _ in 0..3 {
-                    let token = parts.next()?;
-                    let position_str = token.split('/').next()?;
-                    let index = position_str.parse::<i32>().ok()?;
-
-                    mesh_view.indices[indice_id] = index;
-                    indice_id = indice_id.checked_add(1)?;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    for i in 0..mesh_view.indices.len() {
-        if mesh_view.indices[i] < 0 {
-            mesh_view.indices[i] = (indice_id as i64 - mesh_view.indices[i] as i64) as i32;
-        }
-    }
-    Some(())
-}*/
-
 pub fn parse_obj(
     text: &str,
     mesh_view: &mut MeshLoadView<'_>,
@@ -183,15 +118,21 @@ pub fn parse_obj(
                         .parse::<f32>()
                         .ok()?;
 
+                let color = color_from_position(x, y, z);
+
+                let r = ((color >> 16) & 0xFF) as u8;
+                let g = ((color >> 8)  & 0xFF) as u8;
+                let b = ( color        & 0xFF) as u8;
+
                 mesh_view.vertices[vertex_id] =
                     VertexModel {
                         x_model: x,
                         y_model: y,
                         z_model: z,
 
-                        r: 255,
-                        g: 255,
-                        b: 255,
+                        r: r,
+                        g: g,
+                        b: b,
                     };
 
                 vertex_id =
@@ -267,7 +208,7 @@ pub fn parse_obj(
             }
         }
     }
-    
+
     if vertex_id != mesh_view.vertices.len() {
         return None;
     }
@@ -322,4 +263,24 @@ fn parse_obj_vertex_index(
     }
 
     Some(index as u32)
+}
+
+fn color_from_position(
+    x: f32,
+    y: f32,
+    z: f32,
+) -> u32 {
+    let mut hash =
+        x.to_bits()
+            ^ y.to_bits().rotate_left(11)
+            ^ z.to_bits().rotate_left(22);
+
+    // невеликий hash mix
+    hash ^= hash >> 16;
+    hash = hash.wrapping_mul(0x7FEB352D);
+    hash ^= hash >> 15;
+    hash = hash.wrapping_mul(0x846CA68B);
+    hash ^= hash >> 16;
+
+    hash & 0x00FF_FFFF
 }
