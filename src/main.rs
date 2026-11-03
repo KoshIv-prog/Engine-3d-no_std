@@ -12,6 +12,7 @@ mod mesh;
 mod renderer_workspace;
 pub mod camera;
 
+use crate::MouseMode::{Captured, Free};
 use crate::camera::Camera;
 use crate::clipping::near_plane_clip;
 use crate::math::{Mat4, Vec4};
@@ -23,17 +24,16 @@ use core::panic::PanicInfo;
 use core::ptr::{null, null_mut, write};
 use core::slice;
 use windows_sys::Win32::Foundation::{FALSE, HWND, LPARAM, LRESULT, POINT, RECT, TRUE, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::{GetDC, Rectangle, ReleaseDC, SetStretchBltMode, StretchDIBits, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, COLORONCOLOR, DIB_RGB_COLORS, RGBQUAD, SRCCOPY, ClientToScreen};
+use windows_sys::Win32::Graphics::Gdi::{BITMAPINFO, BITMAPINFOHEADER, BI_RGB, COLORONCOLOR, ClientToScreen, DIB_RGB_COLORS, GetDC, RGBQUAD, ReleaseDC, SRCCOPY, SetStretchBltMode, StretchDIBits};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Memory::{GetProcessHeap, HEAP_ZERO_MEMORY, HeapAlloc};
 use windows_sys::Win32::System::SystemInformation::GetTickCount64;
 use windows_sys::Win32::System::Threading::{ExitProcess, Sleep};
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_W,VK_A, VK_S, VK_D, VK_SHIFT, VK_SPACE, VK_ESCAPE, VK_Z};
-use windows_sys::Win32::UI::WindowsAndMessaging::{AdjustWindowRectEx, CREATESTRUCTW, CreateWindowExW, DefWindowProcW, DispatchMessageW, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, RegisterClassExW, SW_SHOWNORMAL, SetWindowLongPtrW, ShowWindow, TranslateMessage, WM_DESTROY, WM_KEYDOWN, WM_KEYUP, WM_NCCREATE, WM_QUIT, WNDCLASSEXW, WS_OVERLAPPEDWINDOW, WM_KILLFOCUS, WM_SETFOCUS, WM_INPUT, ClipCursor, ShowCursor, WM_MOUSEMOVE};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_A, VK_CONTROL, VK_D, VK_ESCAPE, VK_S, VK_SHIFT, VK_SPACE, VK_W};
+use windows_sys::Win32::UI::Input::{GetRawInputData, RAWINPUT, RAWINPUTDEVICE, RAWINPUTHEADER, RID_INPUT, RIM_TYPEMOUSE, RegisterRawInputDevices};
+use windows_sys::Win32::UI::WindowsAndMessaging::{AdjustWindowRectEx, CREATESTRUCTW, ClipCursor, CreateWindowExW, DefWindowProcW, DispatchMessageW, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, RegisterClassExW, SW_SHOWNORMAL, SetWindowLongPtrW, ShowCursor, ShowWindow, TranslateMessage, WM_DESTROY, WM_INPUT, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_MOUSEMOVE, WM_NCCREATE, WM_QUIT, WM_SETFOCUS, WNDCLASSEXW, WS_OVERLAPPEDWINDOW};
 use windows_sys::core::PCWSTR;
 use windows_sys::w;
-use windows_sys::Win32::UI::Input::{RegisterRawInputDevices, RAWINPUTDEVICE, RAWINPUTHEADER, RIM_TYPEMOUSE, GetRawInputData, RAWINPUT, RID_INPUT};
-use crate::MouseMode::{Captured, Free};
 
 const FRAME_HEIGHT: i32 = 720; //9 * 10;
 const FRAME_WIDTH: i32 = 1280; //16*10;
@@ -216,7 +216,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
                     focused: false,
                     toggle_mouse_mode: false,
                 },
-                mouse_mode: MouseMode::Free,
+                mouse_mode: MouseMode::Captured,
             });
         }
     }
@@ -931,7 +931,7 @@ unsafe extern "system" fn window_proc(
 
             if first_press {
                 match wparam as u16 {
-                    VK_Z => {
+                    VK_CONTROL => {
                         state.input.toggle_mouse_mode = true;
                     }
 
