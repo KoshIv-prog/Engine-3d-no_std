@@ -1,11 +1,9 @@
-use core::cmp::max;
+use crate::{VertexClip, VertexProcessed, align_up};
 use core::ffi::c_void;
 use core::fmt::Error;
-use core::ptr::{null, null_mut};
+use core::ptr::null_mut;
 use core::slice;
-use windows_sys::Win32::Graphics::Gdi::ERROR;
 use windows_sys::Win32::System::Memory::{GetProcessHeap, HeapAlloc, HeapFree};
-use crate::{align_up, VertexClip, VertexProcessed};
 
 pub struct RendererWorkspace {
     heap: *mut c_void,
@@ -32,36 +30,36 @@ impl RendererWorkspace {
             vertex_processed_offset:0
         }
     }
-    fn vertex_clip(&self) -> &[VertexClip] {
+    /*fn vertex_clip(&self) -> &[VertexClip] {
         unsafe {
             slice::from_raw_parts(
                 self.heap as *const VertexClip,
                 self.capacity)
         }
-    }
-    fn vertex_clip_mut(&mut self) -> &mut[VertexClip] {
+    }*/
+    /*fn vertex_clip_mut(&mut self) -> &mut[VertexClip] {
         unsafe {
             slice::from_raw_parts_mut(
                 self.heap as *mut VertexClip,
                 self.capacity)
         }
-    }
-    fn vertex_processed(&self) -> &[VertexProcessed] {
+    }*/
+    /*fn vertex_processed(&self) -> &[VertexProcessed] {
         unsafe {
             slice::from_raw_parts(
                 (self.heap as *const u8).add(
                     self.vertex_processed_offset) as *const VertexProcessed,
                 self.capacity)
         }
-    }
-    fn vertex_processed_mut(&mut self) -> &mut[VertexProcessed] {
+    }*/
+    /*fn vertex_processed_mut(&mut self) -> &mut[VertexProcessed] {
         unsafe {
             slice::from_raw_parts_mut(
                 (self.heap as *mut u8).add(
                     self.vertex_processed_offset) as *mut VertexProcessed,
                 self.capacity)
         }
-    }
+    }*/
     pub fn get_view_workspace(
         &mut self,
         len: usize,

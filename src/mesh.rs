@@ -33,15 +33,14 @@ impl Mesh {
             )
         }
     }
-
-    pub fn vertices_mut(&mut self) -> &mut [VertexModel] {
+    /*pub fn vertices_mut(&mut self) -> &mut [VertexModel] {
         unsafe {
             core::slice::from_raw_parts_mut(
                 self.heap as *mut VertexModel,
                 self.vertex_count,
             )
         }
-    }
+    }*/
 
     pub fn indices(&self) -> &[u32] {
         unsafe {
@@ -54,7 +53,7 @@ impl Mesh {
         }
     }
 
-    pub fn indices_mut(&mut self) -> &mut [u32] {
+    /*pub fn indices_mut(&mut self) -> &mut [u32] {
         unsafe {
             core::slice::from_raw_parts_mut(
                 (self.heap as *mut u8)
@@ -63,7 +62,7 @@ impl Mesh {
                 self.index_count,
             )
         }
-    }
+    }*/
 
     pub fn mesh_view(&self) -> MeshView<'_> {
         MeshView {

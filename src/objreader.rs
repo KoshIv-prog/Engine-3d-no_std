@@ -1,6 +1,5 @@
-use windows_sys::core::PCWSTR;
-use crate::{loader, objreader, VertexModel};
-use crate::mesh::{Mesh, MeshLoadView, MeshView};
+use crate::mesh::MeshLoadView;
+use crate::VertexModel;
 
 pub struct ObjCounts {
     pub vertices: usize,

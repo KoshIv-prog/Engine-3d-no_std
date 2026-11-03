@@ -1,5 +1,4 @@
 use core::ffi::c_void;
-use core::mem::{align_of, size_of};
 use core::ptr::{null, null_mut};
 use core::slice;
 
@@ -13,18 +12,18 @@ use windows_sys::Win32::Foundation::{
 
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW,
-    GetFileSizeEx,
-    ReadFile,
     FILE_ATTRIBUTE_NORMAL,
     FILE_SHARE_READ,
+    GetFileSizeEx,
     OPEN_EXISTING,
+    ReadFile,
 };
 
 use windows_sys::Win32::System::Memory::{
     GetProcessHeap,
+    HEAP_ZERO_MEMORY,
     HeapAlloc,
     HeapFree,
-    HEAP_ZERO_MEMORY,
 };
 
 pub struct FileBuffer {

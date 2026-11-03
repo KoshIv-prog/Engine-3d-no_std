@@ -15,7 +15,7 @@ pub fn near_plane_clip(
 ) -> u8{
     let mut count = 0;
 
-    // A -> B
+    // a -> B
     clip_edge(
         clip0,
         clip1,
@@ -35,7 +35,7 @@ pub fn near_plane_clip(
         near,
     );
 
-    // C -> A
+    // C -> a
     clip_edge(
         clip2,
         clip0,

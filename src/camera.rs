@@ -1,3 +1,4 @@
+use crate::{cosf, sinf};
 use crate::math::Mat4;
 
 pub struct Camera {
@@ -84,5 +85,22 @@ impl Camera {
                 &self.projection,
                 &self.view,
             );
+    }
+
+    pub fn move_relative_forward(&mut self, forward: f32){
+        let cos_yaw = unsafe{ cosf(self.yaw)};
+        let sin_yaw = unsafe{ sinf(self.yaw)};
+        
+        self.x += sin_yaw * forward;
+        self.z += cos_yaw * forward;
+        self.view_dirty = true;
+    }
+    pub fn move_relative_strafe(&mut self, strafe: f32){
+        let cos_yaw = unsafe{ cosf(self.yaw)};
+        let sin_yaw = unsafe{ sinf(self.yaw)};
+        
+        self.x += cos_yaw * strafe;
+        self.z += -sin_yaw * strafe;
+        self.view_dirty = true;
     }
 }

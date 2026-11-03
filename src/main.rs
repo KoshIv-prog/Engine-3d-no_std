@@ -12,13 +12,15 @@ mod mesh;
 mod renderer_workspace;
 pub mod camera;
 
+use crate::camera::Camera;
 use crate::clipping::near_plane_clip;
 use crate::math::{Mat4, Vec4};
 use crate::mesh::Mesh;
-use crate::objreader::{parse_obj};
+use crate::objreader::parse_obj;
 use crate::rasrerizator::rasterize;
+use crate::renderer_workspace::RendererWorkspace;
 use core::panic::PanicInfo;
-use core::ptr::{null, null_mut};
+use core::ptr::{null, null_mut, write};
 use core::slice;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{BITMAPINFO, BITMAPINFOHEADER, BI_RGB, COLORONCOLOR, DIB_RGB_COLORS, GetDC, RGBQUAD, ReleaseDC, SRCCOPY, SetStretchBltMode, StretchDIBits};
@@ -26,19 +28,20 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Memory::{GetProcessHeap, HEAP_ZERO_MEMORY, HeapAlloc};
 use windows_sys::Win32::System::SystemInformation::GetTickCount64;
 use windows_sys::Win32::System::Threading::{ExitProcess, Sleep};
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_A, VK_D, VK_S, VK_SHIFT, VK_SPACE, VK_W};
-use windows_sys::Win32::UI::WindowsAndMessaging::{AdjustWindowRectEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, RegisterClassExW, SW_SHOWNORMAL, ShowWindow, TranslateMessage, WM_DESTROY, WM_QUIT, WNDCLASSEXW, WS_OVERLAPPEDWINDOW};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_W,VK_A, VK_S, VK_D, VK_SHIFT, VK_SPACE, VK_ESCAPE};
+use windows_sys::Win32::UI::WindowsAndMessaging::{AdjustWindowRectEx, CREATESTRUCTW, CreateWindowExW, DefWindowProcW, DispatchMessageW, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, RegisterClassExW, SW_SHOWNORMAL, SetWindowLongPtrW, ShowWindow, TranslateMessage, WM_DESTROY, WM_KEYDOWN, WM_KEYUP, WM_NCCREATE, WM_QUIT, WNDCLASSEXW, WS_OVERLAPPEDWINDOW, WM_KILLFOCUS, WM_SETFOCUS, WM_INPUT};
 use windows_sys::core::PCWSTR;
 use windows_sys::w;
-use crate::camera::Camera;
-use crate::renderer_workspace::RendererWorkspace;
+use windows_sys::Win32::UI::Input::{RegisterRawInputDevices, RAWINPUTDEVICE, RAWINPUTHEADER, RIM_TYPEMOUSE, GetRawInputData, RAWINPUT, RID_INPUT};
 
 const FRAME_HEIGHT: i32 = 720; //9 * 10;
-const FRAME_WIDTH:i32= 1280;//16*10;
+const FRAME_WIDTH: i32 = 1280; //16*10;
 
-const SCREEN_HEIGHT :i32 = 720;
+const SCREEN_HEIGHT: i32 = 720;
 const SCREEN_WIDTH :i32 = 1280;
 const TO_RADIANS: f32 = 0.017453292519943295;
+const MOVE_SPEED:f32 = 10.0;
+const MAX_PITCH: f32 = 89.0 * TO_RADIANS;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -146,6 +149,25 @@ struct Transform {
     dirty: bool,
 }
 
+struct WindowState{
+    input : InputState,
+}
+
+struct InputState{
+    w: bool,
+    a: bool,
+    s: bool,
+    d: bool,
+
+    space: bool,
+    shift: bool,
+
+    mouse_delta_x: i32,
+    mouse_delta_y: i32,
+
+    focused: bool,
+}
+
 
 #[unsafe(no_mangle)]
 pub extern "system" fn mainCRTStartup() -> ! {
@@ -154,6 +176,37 @@ pub extern "system" fn mainCRTStartup() -> ! {
 
     let mut objects;
     let mut camera;
+
+    let process_heap = unsafe { GetProcessHeap() };
+
+    let window_state_heap;
+    let window_state_ptr;
+    {
+        let window_state_bytes = size_of::<WindowState>();
+        unsafe {
+            window_state_heap = HeapAlloc(process_heap, HEAP_ZERO_MEMORY, window_state_bytes);
+            if window_state_heap.is_null() {
+                ExitProcess(1);
+            }
+        }
+        window_state_ptr = window_state_heap as *mut WindowState;
+        unsafe {
+            write(window_state_ptr, WindowState {
+                input: InputState {
+                    w: false,
+                    a: false,
+                    s: false,
+                    d: false,
+                    space: false,
+                    shift: false,
+                    mouse_delta_x: 0,
+                    mouse_delta_y: 0,
+                    focused: false,
+                },
+            });
+        }
+    }
+
 
 
     let window_class_name = w!("my window class");
@@ -216,15 +269,32 @@ pub extern "system" fn mainCRTStartup() -> ! {
             null_mut(),
             null_mut(),
             instance,
-            null(),
+            window_state_heap,
         );
         if window.is_null() {
             ExitProcess(1)
         }
     }
 
+    let mouse = RAWINPUTDEVICE {
+        usUsagePage: 0x01, // Generic Desktop Controls
+        usUsage: 0x02,     // Mouse
+        dwFlags: 0,
+        hwndTarget: window,
+    };
 
-    let process_heap = unsafe { GetProcessHeap() };
+    unsafe {
+        if RegisterRawInputDevices(
+            &mouse,
+            1,
+            size_of::<RAWINPUTDEVICE>() as u32,
+        ) == 0
+        {
+            ExitProcess(1);
+        }
+    }
+
+
 
     let framebuffer_ptr;
     let z_buffer_ptr;
@@ -278,19 +348,19 @@ pub extern "system" fn mainCRTStartup() -> ! {
     };
     match render_workspace.ensure_capacity(temp_registry[0].vertex_count){
         Ok(_) => {}
-        Err(e) => {unsafe {ExitProcess(1);}}
+        Err(_) => {unsafe {ExitProcess(1);}}
     };
 
 
     objects = [
-        Object{
+        Object {
             mesh_id: 0,
             transform: Transform {
-                x: -3.0,
-                y: 0.0,
+                x: 0.0,
+                y: -1.2,
                 z: 3.0,
                 rotation_x: 0.0,
-                rotation_y: 0.0,
+                rotation_y: 180.0 * TO_RADIANS,
                 rotation_z: 0.0,
                 scale_x: 1.0,
                 scale_y: 1.0,
@@ -298,8 +368,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
                 matrix: Mat4::identity(),
                 dirty: true,
             },
-        }
-        /*,
+        },/*
         Object{
             mesh_id: 0,
             transform: Transform {
@@ -315,7 +384,8 @@ pub extern "system" fn mainCRTStartup() -> ! {
                 matrix: Mat4::identity(),
                 dirty: true,
             },
-        }*/
+        }
+        */
     ];
 
 
@@ -359,9 +429,8 @@ pub extern "system" fn mainCRTStartup() -> ! {
 
 
     let mut last_time = unsafe {GetTickCount64()};
-    let mut delta_time:f32 = 0.0;
+    let mut delta_time:f32;
     let mut vertex_processed_to_render :[VertexProcessed;4]=[
-
     VertexProcessed{
         processed: false,
         screen_x: 0.0,
@@ -423,7 +492,6 @@ pub extern "system" fn mainCRTStartup() -> ! {
             }
         }
 
-
         unsafe {
             if GetTickCount64() - last_time < 20 {
                 Sleep(2);
@@ -438,32 +506,52 @@ pub extern "system" fn mainCRTStartup() -> ! {
         framebuffer.fill(Pixel::rgb(255, 255, 255));
         z_buffer.fill(0.0);
 
-        unsafe {
-            if GetAsyncKeyState(VK_D as i32) < 0 {
-                camera.x += delta_time*10.0;
+        {
+            let window_state= unsafe { &mut *window_state_ptr };
+
+            let dx = window_state.input.mouse_delta_x;
+            let dy = window_state.input.mouse_delta_y;
+
+            window_state.input.mouse_delta_x = 0;
+            window_state.input.mouse_delta_y = 0;
+
+            if window_state.input.d {
+                camera.move_relative_strafe(delta_time * MOVE_SPEED);
+            } else if window_state.input.a {
+                camera.move_relative_strafe(-delta_time * MOVE_SPEED);
+            }
+
+            if window_state.input.w {
+                camera.move_relative_forward(delta_time * MOVE_SPEED);
+            } else if window_state.input.s {
+                camera.move_relative_forward(-delta_time * MOVE_SPEED);
+            }
+
+            if window_state.input.space {
+                camera.y += delta_time * MOVE_SPEED;
                 camera.view_dirty = true;
-            }else if GetAsyncKeyState(VK_A as i32) < 0 {
-                camera.x -= delta_time*10.0;
+            } else if window_state.input.shift {
+                camera.y -= delta_time * MOVE_SPEED;
                 camera.view_dirty = true;
             }
 
-            if GetAsyncKeyState(VK_W as i32) < 0 {
-                camera.z += delta_time*10.0;
-                camera.view_dirty = true;
-            }else if GetAsyncKeyState(VK_S as i32) < 0 {
-                camera.z -= delta_time*10.0;
-                camera.view_dirty = true;
-            }
-
-            if GetAsyncKeyState(VK_SPACE as i32) < 0 {
-                camera.y += delta_time*10.0;
-                camera.view_dirty = true;
-            }else if GetAsyncKeyState(VK_SHIFT as i32) < 0 {
-                camera.y -= delta_time*10.0;
+            if (dx != 0 || dy != 0) && window_state.input.focused {
+                camera.yaw +=
+                    dx as f32 * 0.002;
+                camera.pitch +=
+                    dy as f32 * 0.002;
+                if camera.pitch > MAX_PITCH {
+                    camera.pitch = MAX_PITCH;
+                } else if camera.pitch < -MAX_PITCH {
+                    camera.pitch = -MAX_PITCH;
+                }
+                camera.yaw = camera.yaw  % (360.0 * TO_RADIANS);
                 camera.view_dirty = true;
             }
-
         }
+
+
+
         objects[0].transform.rotation_y += 10.0 * delta_time*TO_RADIANS;
         objects[0].transform.dirty = true;
 
@@ -477,7 +565,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
             let object = &mut objects[object_idx];
             let mesh =&mut temp_registry[object.mesh_id].mesh_view();
 
-            let mut view_workspace = match render_workspace.get_view_workspace(mesh.vertices.len()){
+            let view_workspace = match render_workspace.get_view_workspace(mesh.vertices.len()){
                 Some(workspace) => workspace,
                 None => continue,
             };
@@ -638,13 +726,138 @@ unsafe extern "system" fn window_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if msg == WM_NCCREATE {
+        let create =unsafe{
+            &*(lparam as *const CREATESTRUCTW)};
+
+        let state =
+            create.lpCreateParams as *mut WindowState;
+
+        unsafe {
+            SetWindowLongPtrW(
+                hwnd,
+                GWLP_USERDATA,
+                state as isize,
+            );
+        }
+    }
+
+    let state_ptr = unsafe{
+        GetWindowLongPtrW(
+            hwnd,
+            GWLP_USERDATA,
+        )} as *mut WindowState;
+
+    if state_ptr.is_null() {
+        return unsafe{DefWindowProcW(hwnd, msg, wparam, lparam)};
+    }
+
     match msg {
+        WM_KILLFOCUS =>{
+            let state = unsafe{ &mut *state_ptr};
+            state.input.a = false;
+            state.input.w = false;
+            state.input.s = false;
+            state.input.d = false;
+            state.input.shift = false;
+            state.input.space = false;
+            state.input.focused = false;
+
+            unsafe {
+                DefWindowProcW(hwnd, msg, wparam, lparam)
+            }
+        },
+        WM_SETFOCUS => {
+            let state = unsafe{ &mut *state_ptr};
+            state.input.focused = true;
+            unsafe {
+                DefWindowProcW(hwnd, msg, wparam, lparam)
+            }
+        },
+        WM_INPUT => {
+            let state = unsafe{ &mut *state_ptr};
+            let mut raw: RAWINPUT =
+                unsafe{core::mem::zeroed()};
+
+            let mut size =
+                size_of::<RAWINPUT>() as u32;
+
+            let result = unsafe {
+                GetRawInputData(
+                    lparam as _,
+                    RID_INPUT,
+                    &mut raw as *mut RAWINPUT as _,
+                    &mut size,
+                    size_of::<RAWINPUTHEADER>() as u32,
+                )};
+
+
+            if result != u32::MAX
+                && raw.header.dwType == RIM_TYPEMOUSE
+            {
+                let mouse = unsafe{raw.data.mouse};
+
+                state.input.mouse_delta_x += mouse.lLastX;
+                state.input.mouse_delta_y += mouse.lLastY;
+            }
+
+            unsafe {
+                DefWindowProcW(
+                    hwnd,
+                    msg,
+                    wparam,
+                    lparam,
+                )
+            }
+
+        },
+        WM_KEYDOWN => {
+            let state = unsafe{ &mut *state_ptr};
+            if !state.input.focused{
+                return 0;
+            }
+            match wparam as u16 {
+                VK_W => state.input.w = true,
+                VK_A => state.input.a = true,
+                VK_S => state.input.s = true,
+                VK_D => state.input.d = true,
+                VK_SPACE => state.input.space = true,
+                VK_SHIFT => state.input.shift = true,
+                VK_ESCAPE => {
+                    unsafe {
+                        PostQuitMessage(0);
+                        return  0
+                    }
+                }
+                _ => {}
+            }
+
+            0
+        },
+
+        WM_KEYUP => {
+            let state = unsafe{ &mut *state_ptr};
+            if !state.input.focused{
+                return 0;
+            }
+            match wparam as u16 {
+                VK_W => state.input.w = false,
+                VK_A => state.input.a = false,
+                VK_S => state.input.s = false,
+                VK_D => state.input.d = false,
+                VK_SPACE => state.input.space = false,
+                VK_SHIFT => state.input.shift = false,
+                _ => {}
+            }
+            0
+        },
+
         WM_DESTROY => {
             unsafe {
                 PostQuitMessage(0);
                 0
             }
-        },
+        }
 
         _ => {
             unsafe {
@@ -735,6 +948,5 @@ unsafe extern "C" {
     fn ceilf(x: f32) -> f32;
     fn sinf(x: f32) -> f32;
     fn cosf(x: f32) -> f32;
-
 }
 
