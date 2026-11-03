@@ -4,7 +4,7 @@
 //extern crate alloc;
 
 mod math;
-mod rasrerizator;
+mod rasterizator;
 mod clipping;
 mod loader;
 mod objreader;
@@ -17,22 +17,23 @@ use crate::clipping::near_plane_clip;
 use crate::math::{Mat4, Vec4};
 use crate::mesh::Mesh;
 use crate::objreader::parse_obj;
-use crate::rasrerizator::rasterize;
+use crate::rasterizator::rasterize;
 use crate::renderer_workspace::RendererWorkspace;
 use core::panic::PanicInfo;
 use core::ptr::{null, null_mut, write};
 use core::slice;
-use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::{BITMAPINFO, BITMAPINFOHEADER, BI_RGB, COLORONCOLOR, DIB_RGB_COLORS, GetDC, RGBQUAD, ReleaseDC, SRCCOPY, SetStretchBltMode, StretchDIBits};
+use windows_sys::Win32::Foundation::{FALSE, HWND, LPARAM, LRESULT, POINT, RECT, TRUE, WPARAM};
+use windows_sys::Win32::Graphics::Gdi::{GetDC, Rectangle, ReleaseDC, SetStretchBltMode, StretchDIBits, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, COLORONCOLOR, DIB_RGB_COLORS, RGBQUAD, SRCCOPY, ClientToScreen};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Memory::{GetProcessHeap, HEAP_ZERO_MEMORY, HeapAlloc};
 use windows_sys::Win32::System::SystemInformation::GetTickCount64;
 use windows_sys::Win32::System::Threading::{ExitProcess, Sleep};
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_W,VK_A, VK_S, VK_D, VK_SHIFT, VK_SPACE, VK_ESCAPE};
-use windows_sys::Win32::UI::WindowsAndMessaging::{AdjustWindowRectEx, CREATESTRUCTW, CreateWindowExW, DefWindowProcW, DispatchMessageW, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, RegisterClassExW, SW_SHOWNORMAL, SetWindowLongPtrW, ShowWindow, TranslateMessage, WM_DESTROY, WM_KEYDOWN, WM_KEYUP, WM_NCCREATE, WM_QUIT, WNDCLASSEXW, WS_OVERLAPPEDWINDOW, WM_KILLFOCUS, WM_SETFOCUS, WM_INPUT};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_W,VK_A, VK_S, VK_D, VK_SHIFT, VK_SPACE, VK_ESCAPE, VK_Z};
+use windows_sys::Win32::UI::WindowsAndMessaging::{AdjustWindowRectEx, CREATESTRUCTW, CreateWindowExW, DefWindowProcW, DispatchMessageW, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, RegisterClassExW, SW_SHOWNORMAL, SetWindowLongPtrW, ShowWindow, TranslateMessage, WM_DESTROY, WM_KEYDOWN, WM_KEYUP, WM_NCCREATE, WM_QUIT, WNDCLASSEXW, WS_OVERLAPPEDWINDOW, WM_KILLFOCUS, WM_SETFOCUS, WM_INPUT, ClipCursor, ShowCursor, WM_MOUSEMOVE};
 use windows_sys::core::PCWSTR;
 use windows_sys::w;
 use windows_sys::Win32::UI::Input::{RegisterRawInputDevices, RAWINPUTDEVICE, RAWINPUTHEADER, RIM_TYPEMOUSE, GetRawInputData, RAWINPUT, RID_INPUT};
+use crate::MouseMode::{Captured, Free};
 
 const FRAME_HEIGHT: i32 = 720; //9 * 10;
 const FRAME_WIDTH: i32 = 1280; //16*10;
@@ -151,6 +152,7 @@ struct Transform {
 
 struct WindowState{
     input : InputState,
+    mouse_mode: MouseMode,
 }
 
 struct InputState{
@@ -165,9 +167,17 @@ struct InputState{
     mouse_delta_x: i32,
     mouse_delta_y: i32,
 
-    focused: bool,
-}
+    mouse_x: i32,
+    mouse_y: i32,
 
+    focused: bool,
+    toggle_mouse_mode:bool,
+}
+#[derive(Clone, Copy, PartialEq)]
+enum MouseMode {
+    Free,
+    Captured,
+}
 
 #[unsafe(no_mangle)]
 pub extern "system" fn mainCRTStartup() -> ! {
@@ -201,8 +211,12 @@ pub extern "system" fn mainCRTStartup() -> ! {
                     shift: false,
                     mouse_delta_x: 0,
                     mouse_delta_y: 0,
+                    mouse_x: 0,
+                    mouse_y: 0,
                     focused: false,
+                    toggle_mouse_mode: false,
                 },
+                mouse_mode: MouseMode::Free,
             });
         }
     }
@@ -507,7 +521,38 @@ pub extern "system" fn mainCRTStartup() -> ! {
         z_buffer.fill(0.0);
 
         {
+            let mode_to_set = {
+                let state = unsafe { &mut *window_state_ptr };
+
+                if state.input.toggle_mouse_mode {
+                    state.input.toggle_mouse_mode = false;
+
+                    Some(
+                        if state.mouse_mode == MouseMode::Captured {
+                            MouseMode::Free
+                        } else {
+                            MouseMode::Captured
+                        }
+                    )
+                } else {
+                    None
+                }
+            };
+
+            if let Some(mode) = mode_to_set {
+                set_mouse_mode(window, mode);
+
+                let state = unsafe { &mut *window_state_ptr };
+
+                state.mouse_mode = mode;
+                state.input.mouse_delta_x = 0;
+                state.input.mouse_delta_y = 0;
+            }
+        }
+
+        {
             let window_state= unsafe { &mut *window_state_ptr };
+
 
             let dx = window_state.input.mouse_delta_x;
             let dy = window_state.input.mouse_delta_y;
@@ -535,18 +580,20 @@ pub extern "system" fn mainCRTStartup() -> ! {
                 camera.view_dirty = true;
             }
 
-            if (dx != 0 || dy != 0) && window_state.input.focused {
-                camera.yaw +=
-                    dx as f32 * 0.002;
-                camera.pitch +=
-                    dy as f32 * 0.002;
-                if camera.pitch > MAX_PITCH {
-                    camera.pitch = MAX_PITCH;
-                } else if camera.pitch < -MAX_PITCH {
-                    camera.pitch = -MAX_PITCH;
+            if window_state.mouse_mode == MouseMode::Captured {
+                if (dx != 0 || dy != 0) && window_state.input.focused {
+                    camera.yaw +=
+                        dx as f32 * 0.002;
+                    camera.pitch +=
+                        dy as f32 * 0.002;
+                    if camera.pitch > MAX_PITCH {
+                        camera.pitch = MAX_PITCH;
+                    } else if camera.pitch < -MAX_PITCH {
+                        camera.pitch = -MAX_PITCH;
+                    }
+                    camera.yaw = camera.yaw % (360.0 * TO_RADIANS);
+                    camera.view_dirty = true;
                 }
-                camera.yaw = camera.yaw  % (360.0 * TO_RADIANS);
-                camera.view_dirty = true;
             }
         }
 
@@ -763,6 +810,15 @@ unsafe extern "system" fn window_proc(
             state.input.space = false;
             state.input.focused = false;
 
+            if state.mouse_mode == Captured {
+                unsafe{
+                    ClipCursor(null());
+                    ShowCursor(TRUE);
+                }
+                state.input.mouse_delta_y = 0;
+                state.input.mouse_delta_x = 0;
+            }
+
             unsafe {
                 DefWindowProcW(hwnd, msg, wparam, lparam)
             }
@@ -770,6 +826,38 @@ unsafe extern "system" fn window_proc(
         WM_SETFOCUS => {
             let state = unsafe{ &mut *state_ptr};
             state.input.focused = true;
+
+            if state.mouse_mode == Captured {
+                let mut bounds = RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                };
+
+                unsafe {
+                    GetClientRect(hwnd, &mut bounds);
+                }
+
+                let mut top_left =POINT{x: bounds.left, y: bounds.top};
+                let mut bottom_right =POINT{x: bounds.right, y: bounds.bottom};
+                unsafe {
+                    ClientToScreen(hwnd, &mut top_left);
+                    ClientToScreen(hwnd, &mut bottom_right);
+                }
+                bounds.top = top_left.y;
+                bounds.left = top_left.x;
+                bounds.bottom = bottom_right.y;
+                bounds.right = bottom_right.x;
+                unsafe {
+                    ClipCursor(&bounds);
+                    ShowCursor(FALSE);
+                }
+
+                state.input.mouse_delta_y = 0;
+                state.input.mouse_delta_x = 0;
+            }
+
             unsafe {
                 DefWindowProcW(hwnd, msg, wparam, lparam)
             }
@@ -811,10 +899,44 @@ unsafe extern "system" fn window_proc(
             }
 
         },
+        WM_MOUSEMOVE => {
+            let state = &mut *state_ptr;
+
+            let x =
+                (lparam as u32 & 0xFFFF) as i16 as i32;
+
+            let y =
+                ((lparam as u32 >> 16) & 0xFFFF)
+                    as i16 as i32;
+
+            state.input.mouse_x = x;
+            state.input.mouse_y = y;
+
+            unsafe {
+                DefWindowProcW(
+                    hwnd,
+                    msg,
+                    wparam,
+                    lparam,
+                )
+            }
+        },
         WM_KEYDOWN => {
             let state = unsafe{ &mut *state_ptr};
             if !state.input.focused{
                 return 0;
+            }
+            let first_press =
+                (lparam & (1 << 30)) == 0;
+
+            if first_press {
+                match wparam as u16 {
+                    VK_Z => {
+                        state.input.toggle_mouse_mode = true;
+                    }
+
+                    _ => {}
+                }
             }
             match wparam as u16 {
                 VK_W => state.input.w = true,
@@ -930,6 +1052,58 @@ fn present_frame(
 
         if lines == 0 {
             // presentation failed
+        }
+    }
+}
+fn set_mouse_mode(
+    hwnd: HWND,
+    mode: MouseMode,
+){
+    let state_ptr = unsafe{
+        GetWindowLongPtrW(
+            hwnd,
+            GWLP_USERDATA,
+        )} as *mut WindowState;
+
+    if state_ptr.is_null() {
+        return;
+    }
+    let state = unsafe{ &mut *state_ptr};
+    match mode {
+        MouseMode::Captured => unsafe {
+            let mut bounds = RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            };
+
+
+            GetClientRect(hwnd, &mut bounds);
+
+            let mut top_left =POINT{x: bounds.left, y: bounds.top};
+            let mut bottom_right =POINT{x: bounds.right, y: bounds.bottom};
+            ClientToScreen(hwnd, &mut top_left);
+            ClientToScreen(hwnd, &mut bottom_right);
+
+            bounds.top = top_left.y;
+            bounds.left = top_left.x;
+            bounds.bottom = bottom_right.y;
+            bounds.right = bottom_right.x;
+            ClipCursor(&bounds);
+            ShowCursor(FALSE);
+            state.mouse_mode = Captured;
+
+            state.input.mouse_delta_y = 0;
+            state.input.mouse_delta_x = 0;
+
+        }
+        MouseMode::Free => unsafe {
+            ClipCursor(null());
+            ShowCursor(TRUE);
+            state.mouse_mode = Free;
+            state.input.mouse_delta_y = 0;
+            state.input.mouse_delta_x = 0;
         }
     }
 }
