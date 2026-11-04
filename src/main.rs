@@ -694,22 +694,19 @@ pub extern "system" fn mainCRTStartup() -> ! {
 
                 let normalized_normal = normalize_vec3(&normal);
 
-                let mut intensity =
-                    normalized_normal.x * light.x +
-                        normalized_normal.y * light.y +
-                        normalized_normal.z * light.z;
-                if intensity < 0.0{
-                    intensity = 0.0;
-                }else if intensity > 1.0 {
-                    intensity = 1.0;
-                }
+                let mut diffuse =
+                    normalized_normal.x * light.x
+                        + normalized_normal.y * light.y
+                        + normalized_normal.z * light.z;
 
+                if diffuse < 0.0 {
+                    diffuse = 0.0;
+                }
 
                 let ambient = 0.15;
 
-                if intensity < ambient {
-                    intensity = ambient;
-                }
+                let intensity =
+                    ambient + diffuse * (1.0 - ambient);
 
                 for i in 0..out_vertices as usize {
                     vertex_processed_to_render[i].r_over_w *= intensity;
