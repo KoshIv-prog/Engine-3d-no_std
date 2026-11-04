@@ -15,13 +15,13 @@ pub mod camera;
 use crate::MouseMode::{Captured, Free};
 use crate::camera::Camera;
 use crate::clipping::near_plane_clip;
-use crate::math::{Mat4, Vec4};
+use crate::math::{Mat4, Vec3, Vec4};
 use crate::mesh::Mesh;
 use crate::objreader::parse_obj;
 use crate::rasterizator::rasterize;
 use crate::renderer_workspace::RendererWorkspace;
 use core::panic::PanicInfo;
-use core::ptr::{null, null_mut, write};
+use core::ptr::{copy, null, null_mut, write};
 use core::slice;
 use windows_sys::Win32::Foundation::{FALSE, HWND, LPARAM, LRESULT, POINT, RECT, TRUE, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{BITMAPINFO, BITMAPINFOHEADER, BI_RGB, COLORONCOLOR, ClientToScreen, DIB_RGB_COLORS, GetDC, RGBQUAD, ReleaseDC, SRCCOPY, SetStretchBltMode, StretchDIBits};
@@ -81,6 +81,10 @@ struct VertexClip{
     y:f32,
     z:f32,
     w:f32,
+
+    view_x:f32,
+    view_y:f32,
+    view_z:f32,
 
     r:f32,
     g:f32,
@@ -625,7 +629,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
                 object.rebuild_transform()
             }
 
-            let final_transform = Mat4::mul( &camera.view_projection, &object.transform.matrix);
+            let model_view = Mat4::mul(&camera.view, &object.transform.matrix);
 
             for i in 0..mesh.vertices.len() {
                 let vec = Vec4 {
@@ -634,8 +638,12 @@ pub extern "system" fn mainCRTStartup() -> ! {
                     z: mesh.vertices[i].z_model,
                     w: 1.0
                 };
-                let clip = Mat4::mul_vec4(&final_transform, vec);
+                let view = Mat4::mul_vec4(&model_view, vec);
+                view_workspace.vertex_clip[i].view_x = view.x;
+                view_workspace.vertex_clip[i].view_y = view.y;
+                view_workspace.vertex_clip[i].view_z = view.z;
 
+                let clip = Mat4::mul_vec4(&camera.projection, view);
                 view_workspace.vertex_clip[i].x = clip.x;
                 view_workspace.vertex_clip[i].y = clip.y;
                 view_workspace.vertex_clip[i].z = clip.z;
@@ -649,6 +657,23 @@ pub extern "system" fn mainCRTStartup() -> ! {
                 let idx0 = mesh.indices[i * 3] as usize;
                 let idx1 = mesh.indices[i * 3 + 1] as usize;
                 let idx2 = mesh.indices[i * 3 + 2] as usize;
+                
+                let normal = face_normal(
+                    &view_workspace.vertex_clip[idx0],
+                    &view_workspace.vertex_clip[idx1],
+                    &view_workspace.vertex_clip[idx2]
+                );
+
+                let show = is_font_face(
+                    &view_workspace.vertex_clip[idx0],
+                    &view_workspace.vertex_clip[idx1],
+                    &view_workspace.vertex_clip[idx2],
+                    &normal
+                );
+
+                if !show {
+                    continue;
+                }
 
                 let out_vertices =  near_plane_clip(
                     &view_workspace.vertex_clip[idx0], &view_workspace.vertex_clip[idx1], &view_workspace.vertex_clip[idx2],
@@ -685,6 +710,34 @@ pub extern "system" fn mainCRTStartup() -> ! {
 
         present_frame(window, &bitmap_info, framebuffer, FRAME_WIDTH, FRAME_HEIGHT);
     }
+}
+
+fn face_normal(v0: &VertexClip, v1: &VertexClip, v2: &VertexClip) -> Vec3{
+    let e1_x = v1.view_x - v0.view_x;
+    let e1_y = v1.view_y - v0.view_y;
+    let e1_z = v1.view_z - v0.view_z;
+
+    let e2_x = v2.view_x - v0.view_x;
+    let e2_y = v2.view_y - v0.view_y;
+    let e2_z = v2.view_z - v0.view_z;
+
+    Vec3{
+        x: e1_y * e2_z - e1_z * e2_y,
+        y: e1_z * e2_x - e1_x * e2_z,
+        z: e1_x * e2_y - e1_y * e2_x
+    }
+}
+fn is_font_face(vertex_clip_idx0: &VertexClip, vertex_clip_idx1: &VertexClip, vertex_clip_idx2: &VertexClip, triangle_normal: &Vec3) -> bool{
+    let to_camera_x = -vertex_clip_idx0.view_x;
+    let to_camera_y = -vertex_clip_idx0.view_y;
+    let to_camera_z = -vertex_clip_idx0.view_z;
+
+    let dot =
+        triangle_normal.x * to_camera_x
+            + triangle_normal.y * to_camera_y
+            + triangle_normal.z * to_camera_z;
+    dot > 0.0
+
 }
 
 fn process_vertex(vertex_clip: &VertexClip, vertex_processed:&mut VertexProcessed){
@@ -1122,5 +1175,7 @@ unsafe extern "C" {
     fn ceilf(x: f32) -> f32;
     fn sinf(x: f32) -> f32;
     fn cosf(x: f32) -> f32;
+    fn sqrtf(x: f32) -> f32;
+    fn ucrt(x: f32) -> f32;
 }
 
