@@ -183,6 +183,14 @@ enum MouseMode {
     Captured,
 }
 
+struct DirectionalLight {
+    direction: Vec3,
+    r: f32,
+    g: f32,
+    b: f32,
+    intensity: f32,
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn mainCRTStartup() -> ! {
     let mut temp_registry:[Mesh;1];
@@ -445,7 +453,17 @@ pub extern "system" fn mainCRTStartup() -> ! {
         msg = core::mem::zeroed()
     }
 
-
+    let mut light = DirectionalLight{
+        direction: Vec3 {
+            x:0.5,
+            y:-0.8,
+            z:0.5,
+        },
+        r: 1.0,
+        g: 0.8,
+        b: 0.6,
+        intensity: 1.0,
+    };
     let mut last_time = unsafe {GetTickCount64()};
     let mut delta_time:f32;
     let mut vertex_processed_to_render :[VertexProcessed;4]=[
@@ -612,6 +630,23 @@ pub extern "system" fn mainCRTStartup() -> ! {
             camera.rebuild_projection(FRAME_WIDTH as f32 / FRAME_HEIGHT as f32);
             camera.rebuild_view_projection()
         }
+        let light_direction_view4 = Mat4::mul_vec4(
+            &camera.view,
+            Vec4 {
+                x: light.direction.x,
+                y: light.direction.y,
+                z: light.direction.z,
+                w: 0.0,
+            },
+        );
+
+        let light_direction_view = normalize_vec3(
+            &Vec3 {
+                x: light_direction_view4.x,
+                y: light_direction_view4.y,
+                z: light_direction_view4.z,
+            }
+        );
         for object_idx in 0..objects.len() {
             let object = &mut objects[object_idx];
             let mesh =&mut temp_registry[object.mesh_id].mesh_view();
@@ -668,7 +703,6 @@ pub extern "system" fn mainCRTStartup() -> ! {
                     &view_workspace.vertex_clip[idx0],
                     &normal
                 );
-
                 if !show {
                     continue;
                 }
@@ -686,32 +720,34 @@ pub extern "system" fn mainCRTStartup() -> ! {
                 if out_vertices == 0 {
                     continue;
                 }
-                let light = Vec3{//todo remove
-                    x:0.0,
-                    y:0.0,
-                    z:-1.0,
-                };
 
                 let normalized_normal = normalize_vec3(&normal);
 
                 let mut diffuse =
-                    normalized_normal.x * light.x
-                        + normalized_normal.y * light.y
-                        + normalized_normal.z * light.z;
+                    normalized_normal.x * -light_direction_view.x
+                        + normalized_normal.y * -light_direction_view.y
+                        + normalized_normal.z * -light_direction_view.z;
 
                 if diffuse < 0.0 {
                     diffuse = 0.0;
+                }else if diffuse>1.0 {
+                    diffuse = 1.0;
                 }
-
                 let ambient = 0.15;
 
-                let intensity =
-                    ambient + diffuse * (1.0 - ambient);
+                let light_r =
+                    ambient + diffuse * light.r * light.intensity;
+
+                let light_g =
+                    ambient + diffuse * light.g * light.intensity;
+
+                let light_b =
+                    ambient + diffuse * light.b * light.intensity;
 
                 for i in 0..out_vertices as usize {
-                    vertex_processed_to_render[i].r_over_w *= intensity;
-                    vertex_processed_to_render[i].g_over_w *= intensity;
-                    vertex_processed_to_render[i].b_over_w *= intensity;
+                    vertex_processed_to_render[i].r_over_w *= light_r;
+                    vertex_processed_to_render[i].g_over_w *= light_g;
+                    vertex_processed_to_render[i].b_over_w *= light_b;
                 }
 
                 rasterize(
