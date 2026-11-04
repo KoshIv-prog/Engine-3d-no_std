@@ -1,4 +1,4 @@
-use crate::{cosf, sinf, tanf};
+use crate::{cosf, sinf, tanf, VertexClip, sqrtf};
 
 #[derive(Clone, Copy)]
 pub struct Vec4 {
@@ -13,6 +13,39 @@ pub struct Vec3 {
     pub x: f32,
     pub y: f32,
     pub z: f32,
+}
+
+pub fn face_normal(v0: &VertexClip, v1: &VertexClip, v2: &VertexClip) -> Vec3{
+    let e1_x = v1.view_x - v0.view_x;
+    let e1_y = v1.view_y - v0.view_y;
+    let e1_z = v1.view_z - v0.view_z;
+
+    let e2_x = v2.view_x - v0.view_x;
+    let e2_y = v2.view_y - v0.view_y;
+    let e2_z = v2.view_z - v0.view_z;
+
+    Vec3{
+        x: e1_y * e2_z - e1_z * e2_y,
+        y: e1_z * e2_x - e1_x * e2_z,
+        z: e1_x * e2_y - e1_y * e2_x
+    }
+}
+
+pub fn normalize_vec3(vector: &Vec3) -> Vec3 {
+    let length_sq =
+        vector.x * vector.x
+            + vector.y * vector.y
+            + vector.z * vector.z;
+
+    let length = unsafe {
+        sqrtf(length_sq)
+    };
+
+    Vec3 {
+        x: vector.x / length,
+        y: vector.y / length,
+        z: vector.z / length,
+    }
 }
 
 #[derive(Clone, Copy)]

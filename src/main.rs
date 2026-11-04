@@ -15,7 +15,7 @@ pub mod camera;
 use crate::MouseMode::{Captured, Free};
 use crate::camera::Camera;
 use crate::clipping::near_plane_clip;
-use crate::math::{Mat4, Vec3, Vec4};
+use crate::math::{face_normal, Mat4, Vec3, Vec4, normalize_vec3};
 use crate::mesh::Mesh;
 use crate::objreader::parse_obj;
 use crate::rasterizator::rasterize;
@@ -686,6 +686,37 @@ pub extern "system" fn mainCRTStartup() -> ! {
                 if out_vertices == 0 {
                     continue;
                 }
+                let light = Vec3{//todo remove
+                    x:0.0,
+                    y:0.0,
+                    z:-1.0,
+                };
+
+                let normalized_normal = normalize_vec3(&normal);
+
+                let mut intensity =
+                    normalized_normal.x * light.x +
+                        normalized_normal.y * light.y +
+                        normalized_normal.z * light.z;
+                if intensity < 0.0{
+                    intensity = 0.0;
+                }else if intensity > 1.0 {
+                    intensity = 1.0;
+                }
+
+
+                let ambient = 0.15;
+
+                if intensity < ambient {
+                    intensity = ambient;
+                }
+
+                for i in 0..out_vertices as usize {
+                    vertex_processed_to_render[i].r_over_w *= intensity;
+                    vertex_processed_to_render[i].g_over_w *= intensity;
+                    vertex_processed_to_render[i].b_over_w *= intensity;
+                }
+
                 rasterize(
                     &vertex_processed_to_render[0],
                     &vertex_processed_to_render[1],
@@ -710,21 +741,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
     }
 }
 
-fn face_normal(v0: &VertexClip, v1: &VertexClip, v2: &VertexClip) -> Vec3{
-    let e1_x = v1.view_x - v0.view_x;
-    let e1_y = v1.view_y - v0.view_y;
-    let e1_z = v1.view_z - v0.view_z;
 
-    let e2_x = v2.view_x - v0.view_x;
-    let e2_y = v2.view_y - v0.view_y;
-    let e2_z = v2.view_z - v0.view_z;
-
-    Vec3{
-        x: e1_y * e2_z - e1_z * e2_y,
-        y: e1_z * e2_x - e1_x * e2_z,
-        z: e1_x * e2_y - e1_y * e2_x
-    }
-}
 fn is_font_face(vertex_clip_idx0: &VertexClip, triangle_normal: &Vec3) -> bool{
     let to_camera_x = -vertex_clip_idx0.view_x;
     let to_camera_y = -vertex_clip_idx0.view_y;
