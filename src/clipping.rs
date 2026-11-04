@@ -137,7 +137,7 @@ fn emit_intersection(
         (near - a.w)
             / (b.w - a.w);
 
-    let intersection = VertexClip {//todo
+    let intersection = VertexClip {
         x: a.x + (b.x - a.x) * t,
         y: a.y + (b.y - a.y) * t,
         z: a.z + (b.z - a.z) * t,

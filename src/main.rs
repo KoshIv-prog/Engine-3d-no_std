@@ -657,7 +657,7 @@ pub extern "system" fn mainCRTStartup() -> ! {
                 let idx0 = mesh.indices[i * 3] as usize;
                 let idx1 = mesh.indices[i * 3 + 1] as usize;
                 let idx2 = mesh.indices[i * 3 + 2] as usize;
-                
+
                 let normal = face_normal(
                     &view_workspace.vertex_clip[idx0],
                     &view_workspace.vertex_clip[idx1],
@@ -666,8 +666,6 @@ pub extern "system" fn mainCRTStartup() -> ! {
 
                 let show = is_font_face(
                     &view_workspace.vertex_clip[idx0],
-                    &view_workspace.vertex_clip[idx1],
-                    &view_workspace.vertex_clip[idx2],
                     &normal
                 );
 
@@ -727,7 +725,7 @@ fn face_normal(v0: &VertexClip, v1: &VertexClip, v2: &VertexClip) -> Vec3{
         z: e1_x * e2_y - e1_y * e2_x
     }
 }
-fn is_font_face(vertex_clip_idx0: &VertexClip, vertex_clip_idx1: &VertexClip, vertex_clip_idx2: &VertexClip, triangle_normal: &Vec3) -> bool{
+fn is_font_face(vertex_clip_idx0: &VertexClip, triangle_normal: &Vec3) -> bool{
     let to_camera_x = -vertex_clip_idx0.view_x;
     let to_camera_y = -vertex_clip_idx0.view_y;
     let to_camera_z = -vertex_clip_idx0.view_z;
